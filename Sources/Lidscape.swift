@@ -433,13 +433,46 @@ final class MacBookPreview: SCNView {
         let top = display.convertPosition(baked ? SCNVector3(0, bounds.max.y, bounds.min.z) : SCNVector3(0, bounds.min.y, bounds.max.z), to: nil)
         let dy = Double(top.y - bottom.y), dz = Double(top.z - bottom.z)
         let scale = geometry.width / Double(bounds.max.x - bounds.min.x)
-        var hingeWorld = baked ? SCNVector3(0, 0.65, bottom.z + 0.39) : assembly.convertPosition(SCNVector3Zero, to: nil)
-        if !baked { hingeWorld.y += 0.7 }
         let lidClone = assembly.clone()
         lidClone.transform = assembly.worldTransform
         assembly.removeFromParentNode()
-        // Air includes a baked shadow mesh spanning the original open pose.
         asset.rootNode.childNode(withName: "STqWlxoLEgIXuhO", recursively: true)?.removeFromParentNode()
+        var hingeWorld = baked ? SCNVector3(0, 0.65, bottom.z + 0.39) : lidClone.convertPosition(SCNVector3Zero, to: nil)
+        if !baked { hingeWorld.y += 0.7 }
+        if selectedModel == "MacBookPro14" {
+        // Solve the hinge from the real mesh in its closed pose. This avoids
+        // model-specific guessed offsets and preserves the authored open pose.
+        func vertices(_ root: SCNNode) -> [SCNVector3] {
+            var result: [SCNVector3] = []
+            func read(_ node: SCNNode) {
+                guard let source = node.geometry?.sources(for: .vertex).first,
+                      source.usesFloatComponents, source.bytesPerComponent == 4 else { return }
+                source.data.withUnsafeBytes { bytes in
+                    for i in 0..<source.vectorCount {
+                        let offset = source.dataOffset + i * source.dataStride
+                        let x = bytes.loadUnaligned(fromByteOffset: offset, as: Float.self)
+                        let y = bytes.loadUnaligned(fromByteOffset: offset + 4, as: Float.self)
+                        let z = bytes.loadUnaligned(fromByteOffset: offset + 8, as: Float.self)
+                        result.append(node.convertPosition(SCNVector3(x, y, z), to: nil))
+                    }
+                }
+            }
+            read(root); root.enumerateChildNodes { node, _ in read(node) }
+            return result
+        }
+        let baseVertices = vertices(asset.rootNode)
+        let lidVertices = vertices(lidClone)
+        guard !baseVertices.isEmpty, !lidVertices.isEmpty else { return false }
+        let closingRotation = Double.pi / 2 - atan2(dz, dy)
+        let c = cos(closingRotation), sn = sin(closingRotation), a = 1 - c
+        let closedY = lidVertices.map { Double($0.y) * c - Double($0.z) * sn }
+        let closedZ = lidVertices.map { Double($0.y) * sn + Double($0.z) * c }
+        let baseZ = baseVertices.map { Double($0.z) }
+        let shiftY = baseVertices.map { Double($0.y) }.max()! + 0.02 - closedY.min()!
+        let shiftZ = (baseZ.min()! + baseZ.max()! - closedZ.min()! - closedZ.max()!) / 2
+        hingeWorld = SCNVector3(0, (a * shiftY - sn * shiftZ) / (2 * a),
+                                     (sn * shiftY + a * shiftZ) / (2 * a))
+        }
         let baseScale = SCNNode()
         baseScale.scale = SCNVector3(scale, scale, scale)
         let base = asset.rootNode.clone()
@@ -458,7 +491,10 @@ final class MacBookPreview: SCNView {
         let hinge = SCNVector3(0, (offsetY * cos(rotation) - offsetZ * sin(rotation)) * geometry.height / hypot(dy, dz),
                               (offsetY * sin(rotation) + offsetZ * cos(rotation)) * scale)
         lid.pivot = SCNMatrix4MakeTranslation(hinge.x, hinge.y, hinge.z)
-        lid.position = hinge
+        // The pivot is expressed in the normalized upright lid coordinates,
+        // but its position must remain in the base's unrotated coordinates.
+        // Using the rotated pivot for both displaces the hinge when closing.
+        lid.position = SCNVector3(0, offsetY * scale, offsetZ * scale)
         importedModelName = selectedModel
         return true
     }
