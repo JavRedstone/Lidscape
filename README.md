@@ -61,7 +61,7 @@ The app retains its original bundle identifier (`local.macfold.app`) across the 
 The **Preview** tab works without Screen Recording permission or a supported lid sensor.
 
 1. Choose a model and color. The app selects a matching model family from your Mac's hardware identifier when supported; **Use my Mac** restores that selection. Color is selected manually.
-2. Use **Your viewpoint** to see the model from the configured eye position, or **Inspect in 3D** to orbit around it. Returning to Your viewpoint restores the camera.
+2. Use **Your viewpoint** to see the model from the configured eye position, or **Inspect in 3D** to orbit around it. Use the scroll wheel or a two-finger scroll to zoom in and out. Returning to Your viewpoint restores the camera.
 3. Drag the **Lid** slider. By default, its endpoint is **0° = fully closed**. The model uses the original bundled Lidscape landscape at `Resources/Wallpapers/Lidscape.png`, with the same projection and blur as the desktop effect. A procedural ribbon background is used if the asset is unavailable.
 4. Press the play button beside **Lid** to sweep automatically between open and the full slider endpoint (fully closed, or edge-on in eye-relative mode), pausing at each end for the reset delay plus 0.8 seconds. Press pause or drag manually to stop. Playback stops when leaving the preview.
 5. Release the slider to try **Hold to reset**, enabled by default. After the reset delay, the image smoothly returns to normal while the lid stays in place. Dragging again smoothly restores the folded projection.

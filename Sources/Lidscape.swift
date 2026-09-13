@@ -370,6 +370,20 @@ final class MacBookPreview: SCNView {
     private let screen = SCNNode()
     private let cameraNode = SCNNode()
     private let inspectionCamera = SCNNode()
+    private var zoomTarget = SCNVector3Zero
+    override func scrollWheel(with event: NSEvent) {
+        guard allowsCameraControl, let camera = pointOfView else { return }
+        defaultCameraController.stopInertia()
+        let offset = SCNVector3(camera.position.x - zoomTarget.x, camera.position.y - zoomTarget.y, camera.position.z - zoomTarget.z)
+        let distance = sqrt(offset.x * offset.x + offset.y * offset.y + offset.z * offset.z)
+        guard distance > 0 else { return }
+        let delta = event.scrollingDeltaY * (event.hasPreciseScrollingDeltas ? 1 : 8)
+        let newDistance = min(3000, max(100, distance * exp(-delta * 0.006)))
+        camera.position = SCNVector3(zoomTarget.x + offset.x * newDistance / distance,
+                                    zoomTarget.y + offset.y * newDistance / distance,
+                                    zoomTarget.z + offset.z * newDistance / distance)
+        needsDisplay = true
+    }
     private let hardware = SCNNode()
     private lazy var gpu = FoldGPU(device: device ?? MTLCreateSystemDefaultDevice()!)
     private var dimensions = CGSize.zero
@@ -465,10 +479,12 @@ final class MacBookPreview: SCNView {
         guard !baseVertices.isEmpty, !lidVertices.isEmpty else { return false }
         let closingRotation = Double.pi / 2 - atan2(dz, dy)
         let c = cos(closingRotation), sn = sin(closingRotation), a = 1 - c
-        let closedY = lidVertices.map { Double($0.y) * c - Double($0.z) * sn }
         let closedZ = lidVertices.map { Double($0.y) * sn + Double($0.z) * c }
         let baseZ = baseVertices.map { Double($0.z) }
-        let shiftY = baseVertices.map { Double($0.y) }.max()! + 0.02 - closedY.min()!
+        // Seat the active display surface above the keyboard, not the
+        // lowest hinge protrusion (which leaves the shell floating).
+        let closedDisplayY = Double(bottom.y) * c - Double(bottom.z) * sn
+        let shiftY = baseVertices.map { Double($0.y) }.max()! + 0.02 - closedDisplayY
         let shiftZ = (baseZ.min()! + baseZ.max()! - closedZ.min()! - closedZ.max()!) / 2
         hingeWorld = SCNVector3(0, (a * shiftY - sn * shiftZ) / (2 * a),
                                      (sn * shiftY + a * shiftZ) / (2 * a))
@@ -570,7 +586,8 @@ final class MacBookPreview: SCNView {
             activeCamera.position = sideView
                 ? SCNVector3(geometry.width * 1.5, geometry.height * 1.6, geometry.height * 2.3)
                 : SCNVector3(0, geometry.eyeHeight, geometry.distance)
-            activeCamera.look(at: SCNVector3(0, geometry.height * 0.40, geometry.height * 0.18),
+            zoomTarget = SCNVector3(0, geometry.height * 0.40, geometry.height * 0.18)
+            activeCamera.look(at: zoomTarget,
                                  up: SCNVector3(0, 1, 0), localFront: SCNVector3(0, 0, -1))
             activeCamera.camera!.fieldOfView = 40
             pointOfView = activeCamera
