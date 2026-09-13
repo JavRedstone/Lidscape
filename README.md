@@ -4,7 +4,16 @@
 
 Inspired by the iPhone Duo fold animation, Lidscape brings the same perspective, blur, and fade effects to your MacBook as you close its lid.
 
+<img src="docs/images/preview.gif" alt="Animated Lidscape preview: folding, holding still, resetting to normal, moving again, closing, and reopening" width="640">
+
+*A looping demonstration rendered with the app’s projection, blur, fade, and hold-reset logic.*
+
+<details>
+<summary>Static preview screenshot</summary>
+
 <img src="docs/images/preview.png" alt="Lidscape preview showing perspective, progressive blur, and fading on a partially folded MacBook" width="760">
+
+</details>
 
 Move the lid to animate perspective, blur, and fading. Hold it still to smoothly restore your normal desktop. Enable auto-calibration to make a new comfortable screen angle your starting position.
 
@@ -167,6 +176,8 @@ Core Image renders directly to Metal textures for SceneKit and the desktop overl
 ```
 
 Tests cover projection geometry, calibration, reset defaults, hardware mapping, blur, smoothing, hold timing, and sensor filtering. Graphics checks require access to a macOS graphical session and Metal; restricted or headless environments may fail to render correctly.
+
+To regenerate the README animation, run `./scripts/record-preview.sh` (requires FFmpeg, a graphical macOS session, and optional local Apple models for the illustrated shell). It renders a deterministic sequence at 25 fps; this GIF frame rate is independent of the app’s rendering target.
 
 The benchmark opens the full SwiftUI preview and simulates slider changes. A local run measured approximately **120 SceneKit render callbacks/s**, with a **9.26 ms p95 frame interval**, over six seconds after warm-up. This measures simulated input and render cadence, not end-to-end physical mouse latency or live desktop capture performance. Frame rate depends on hardware, display refresh rate, and system load.
 
