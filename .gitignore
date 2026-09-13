@@ -1,0 +1,7 @@
+build/
+.DS_Store
+
+# Local Apple assets; redistribution rights are not established.
+Resources/Models/*.usdz
+# Working logo concepts are not release assets.
+Resources/AppIcon/Lidscape-concept-*.png
