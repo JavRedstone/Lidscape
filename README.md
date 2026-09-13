@@ -2,7 +2,7 @@
 
 <img src="Resources/AppIcon/AppIcon.png" alt="Lidscape app icon" width="128">
 
-Inspired by the iPhone Duo fold animation, Lidscape brings the same perspective, blur, and fade effects to your MacBook as you close its lid.
+Inspired by the [iPhone Duo fold animation](https://www.apple.com/iphone-duo/), Lidscape brings the same perspective, blur, and fade effects to your MacBook as you close its lid.
 
 <img src="docs/images/preview.gif" alt="Animated Lidscape preview: folding, holding still, resetting to normal, moving again, closing, and reopening" width="640">
 
@@ -190,6 +190,8 @@ The benchmark opens the full SwiftUI preview and simulates slider changes. A loc
 - This is an experimental adaptation, not a frame-matched reproduction of the reference transition.
 
 ## References and model assets
+
+- [Apple iPhone Duo](https://www.apple.com/iphone-duo/) — original fold animation inspiration.
 
 - [iPhone Duo macOS animation](https://github.com/lqSky7/iphone-duo-macos-animation) — adaptation and effect reference.
 - [LidAngleSensor](https://github.com/samhenrigold/LidAngleSensor) — HID sensor protocol reference.
