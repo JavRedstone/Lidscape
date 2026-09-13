@@ -6,7 +6,9 @@ Inspired by the iPhone Duo fold animation, Lidscape brings the same perspective,
 
 <img src="docs/images/preview.png" alt="Lidscape preview showing perspective, progressive blur, and fading on a partially folded MacBook" width="760">
 
-Try the effect in 3D, play it back automatically, or control it with your MacBook’s physical lid.
+Move the lid to animate perspective, blur, and fading. Hold it still to smoothly restore your normal desktop. Enable auto-calibration to make a new comfortable screen angle your starting position.
+
+Try the full sequence in 3D with automatic preview playback, or control it with your MacBook’s physical lid.
 
 <details>
 <summary>See the settings</summary>
@@ -73,6 +75,46 @@ Enable **Desktop effect** and grant Screen Recording access when prompted. If ne
 Slowly close the lid below **Start below**. The app captures the desktop and presents a click-through overlay on the built-in display. Opening past the threshold, completing a hold reset, pausing, or quitting dismisses the overlay. The menu bar provides enable/pause and quit controls.
 
 The preview slider only controls the preview. The desktop effect follows the physical lid sensor.
+
+## From movement back to normal
+
+Lidscape responds to both **the lid’s angle and whether you are still moving it**. The visible effect has four stages:
+
+| State | What you see | What happens next |
+| --- | --- | --- |
+| **Normal / ready** | Your normal, live desktop. | Closing below the starting threshold activates the effect. |
+| **Moving / folding** | A desktop snapshot changes perspective with the lid. Blur and darkening grow toward the top. | Stop moving to begin the hold timer, or open past the threshold to return to the live desktop. |
+| **Holding still** | The current folded projection remains while the reset delay counts down. Small sensor fluctuations are filtered. | Move again to continue folding, or finish the delay to reset. |
+| **Returning to normal** | Perspective, blur, and fading smoothly ease away while the lid stays at its current angle. | The snapshot overlay disappears and the live desktop resumes. Moving again within the effect range smoothly reactivates the projection. |
+
+```mermaid
+stateDiagram-v2
+    Normal --> Folding: Close below starting threshold
+    Folding --> Holding: Stop moving
+    Holding --> Folding: Move again
+    Holding --> Returning: Hold reset delay completes
+    Returning --> Normal: Live desktop restored
+    Returning --> Folding: Move again within effect range
+    Folding --> Normal: Open past starting threshold
+    Holding --> Normal: Open past starting threshold
+```
+
+**Hold to reset is on by default**, with a one-second delay. Turn it off to keep the folded projection visible while the lid is stationary. Returning to normal does not change your calibrated starting angle.
+
+### Adjusting your working angle
+
+**Auto-calibrate when the lid settles** is a separate, optional behavior. When enabled, moving the physical screen to a new comfortable angle and leaving it still starts its own **Calibration delay**. Once the angle is eligible and that delay finishes, Lidscape:
+
+1. Finishes a return to normal if a desktop overlay is active.
+2. Uses the settled lid angle as the new **Start below** angle.
+3. Estimates eye height assuming you are looking perpendicular to the screen center, using your configured viewing distance.
+4. Waits for another movement before calibrating again.
+
+For example, adjust your screen from 90° to 110° and let it settle: with auto-calibration enabled, 110° becomes the new reference for future folds. With auto-calibration off, hold reset can still restore the normal desktop, but the reference stays at 90°.
+
+The two timers are independent: **Reset delay** controls when the image returns to normal; **Calibration delay** controls when a new working angle is adopted. Auto-calibration can request a return to normal even if Hold to reset is off. It only accepts physical lid angles from 60–150° that also satisfy **Minimum calibration angle**. It assumes your viewing posture; it does not track your eyes.
+
+The preview demonstrates folding, holding, and returning to normal. Its play button pauses at each endpoint to exercise hold reset. Auto-calibration uses the **physical lid sensor**, so dragging the preview cannot recalibrate your real working position.
 
 ## Menu bar mode
 
