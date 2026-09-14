@@ -50,6 +50,17 @@ On first launch, Lidscape explains Screen Recording and offers **Launch at login
 
 The build uses an available Apple Development signing identity (or `LIDSCAPE_SIGN_IDENTITY`), falling back to ad-hoc signing if none is available. It creates an app in `build/` and bundles the local USDZ assets from `Resources/Models/`. Building does not register a login item; Launch at login is offered inside the app.
 
+## Install in Applications
+
+After building, copy **`build/Lidscape.app`** into your Mac’s **Applications** folder:
+
+1. Quit any running copy of Lidscape.
+2. In Finder, drag `Lidscape.app` from the project’s `build` folder into **Applications**. When updating, replace the existing copy.
+3. Open **Applications → Lidscape** and use that copy going forward.
+4. If macOS requests Screen Recording access, enable the Applications copy in **System Settings → Privacy & Security → Screen & System Audio Recording**, then quit and reopen Lidscape if prompted.
+
+Set **Launch at login** from the installed copy in **Settings → App behavior**. Saved preferences carry over because the app keeps the same bundle identifier. Future builds still appear in `build/`; repeat these steps to install an update.
+
 ## App icon
 
 The official icon is a direct transparent render of the app’s **Simple** laptop model with the actual screen effect. Regenerate it with `./scripts/render-icon.sh`.
@@ -149,7 +160,7 @@ For a comfortable working position, set **Distance**, position the lid, look str
 | Minimum calibration angle | 30° | Blocks automatic calibration below this physical lid angle; adjustable from 0–120°. |
 | Smoothing | 55 ms | Response time for following angle changes; adjustable from 25–140 ms. |
 | Blur | 100% | Progressive blur strength; adjustable from 0–200%. |
-| Fade to black | 50% | Darkening increases with fold progress and toward the top; adjustable from 0–200%, with 0% off. |
+| Fade to black | 100% | Darkening increases with fold progress and toward the top; adjustable from 0–200%, with 0% off. |
 | Hold to reset | On | Returns the image to normal after holding still. |
 | Reset delay | 1 s | Delay after holding still; adjustable from 0.5–3 s. |
 | Start below | 90° | Reference angle for the effect; adjustable from 35–150°. Calibration also sets this value. |
