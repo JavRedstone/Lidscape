@@ -482,6 +482,13 @@ final class MacBookPreview: SCNView {
         guard let rig = rigs[selectedModel],
               let assembly = asset.rootNode.childNode(withName: rig.0, recursively: true),
               let display = asset.rootNode.childNode(withName: rig.1, recursively: true) else { return false }
+        // Replace the authored display artwork with black so rounded corners
+        // reveal the display surround, never the asset's original wallpaper.
+        display.geometry = display.geometry?.copy() as? SCNGeometry
+        let displayBacking = SCNMaterial()
+        displayBacking.lightingModel = .constant
+        displayBacking.diffuse.contents = NSColor.black
+        display.geometry?.materials = [displayBacking]
         let baked = rig.2
         let bounds = display.boundingBox
         let bottom = display.convertPosition(baked ? SCNVector3(0, bounds.min.y, bounds.max.z) : SCNVector3(0, bounds.min.y, bounds.min.z), to: nil)
@@ -582,13 +589,18 @@ final class MacBookPreview: SCNView {
         lid.addChildNode(box(w + 7, h + 4, 0.5,
             at: SCNVector3(0, h / 2, -0.25), color: .black, radius: 2))
         }
-        let panel = SCNPlane(width: w, height: h)
+        // Keep a small physical inset from the aperture to avoid drawing over
+        // the bezel at grazing angles. Rounded geometry clips every effect.
+        let inset = 0.6
+        let panel = SCNPlane(width: w - 2 * inset, height: h - 2 * inset)
+        panel.cornerRadius = 3.5
+        panel.cornerSegmentCount = 12
         let material = SCNMaterial()
         material.lightingModel = .constant
         material.isDoubleSided = false
         panel.materials = [material]
         screen.geometry = panel
-        screen.position = SCNVector3(0, h / 2, 0.1)
+        screen.position = SCNVector3(0, h / 2, 0.03)
         lid.addChildNode(screen)
         dimensions = CGSize(width: w, height: h)
     }
