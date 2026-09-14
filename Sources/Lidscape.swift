@@ -459,9 +459,12 @@ final class MacBookPreview: SCNView {
         lidClone.transform = assembly.worldTransform
         assembly.removeFromParentNode()
         asset.rootNode.childNode(withName: "STqWlxoLEgIXuhO", recursively: true)?.removeFromParentNode()
+        if selectedModel == "MacBookAir15-sky-blue" {
+            asset.rootNode.childNode(withName: "GymPGKieMgDZPqK", recursively: true)?.removeFromParentNode()
+        }
         var hingeWorld = baked ? SCNVector3(0, 0.65, bottom.z + 0.39) : lidClone.convertPosition(SCNVector3Zero, to: nil)
         if !baked { hingeWorld.y += 0.7 }
-        if selectedModel == "MacBookPro14" {
+        do {
         // Solve the hinge from the real mesh in its closed pose. This avoids
         // model-specific guessed offsets and preserves the authored open pose.
         func vertices(_ root: SCNNode) -> [SCNVector3] {
