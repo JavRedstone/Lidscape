@@ -755,7 +755,7 @@ struct MacHardware {
         guard Bundle.main.bundleIdentifier == "local.macfold.app" else { return }
         NSApp.setActivationPolicy(showDockIcon ? .regular : .accessory)
     }
-    @Published var fadeStrength = 0.5 { didSet { saveSettings() } }
+    @Published var fadeStrength = 1.0 { didSet { saveSettings() } }
     private func saveSettings() {
         guard settingsReady else { return }
         preferences.set([
@@ -779,7 +779,7 @@ struct MacHardware {
         geometry.eyeHeight = number("eyeHeight", 300, -600...3000)
         trigger = number("trigger", 90, 35...150)
         smoothing = number("smoothing", 0.055, 0.025...0.14)
-        blurStrength = number("blur", 1, 0...2); fadeStrength = number("fade", 0.5, 0...2)
+        blurStrength = number("blur", 1, 0...2); fadeStrength = number("fade", 1, 0...2)
         holdToReset = values["hold"] as? Bool ?? true
         holdDelay = number("holdDelay", 1, 0.5...3)
         autoCalibrate = values["auto"] as? Bool ?? true
@@ -800,7 +800,7 @@ struct MacHardware {
         setEnabled(false)
         showDockIcon = true
         geometry = ViewingGeometry(); refreshDisplaySize()
-        trigger = 90; smoothing = 0.055; blurStrength = 1; fadeStrength = 0.5
+        trigger = 90; smoothing = 0.055; blurStrength = 1; fadeStrength = 1
         holdToReset = true; holdDelay = 1
         autoCalibrate = true; enableAtLaunch = true; autoCalibrationDelay = 5; minimumCalibrationAngle = 30
         eyeRelativePreview = false; preview = 0; previewEditing = false; previewPlaying = false
