@@ -28,6 +28,10 @@ Tune the effect and calibration, save your preferences, and optionally run from 
 
 </details>
 
+## User guide
+
+For step-by-step instructions with cropped screenshots, see the [Lidscape guide](docs/README.md): [installation](docs/getting-started.md), [preview controls](docs/preview.md), [effect settings and calibration](docs/settings.md), and [troubleshooting](docs/troubleshooting.md).
+
 ## Build and run
 
 [GitHub repository](https://github.com/JavRedstone/Lidscape)
