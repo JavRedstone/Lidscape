@@ -15,7 +15,7 @@ final class FrameCounter: NSObject, SCNSceneRendererDelegate {
  init(view:MacBookPreview,model:FoldModel) {self.view=view;self.model=model}
  @objc func tick(_ link:CADisplayLink) {
   let t=ProcessInfo.processInfo.systemUptime-start
-  model.preview = 0.35+0.3*sin(t*2)
+  model.preview = 0.5+0.48*sin(t*10)
  }
 }
 @main struct PresentedCheck {

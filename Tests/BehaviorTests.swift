@@ -21,7 +21,7 @@ import SceneKit
         precondition(!restored.holdToReset && restored.autoCalibrationDelay == 2.4)
         restored.resetSettings()
         let resetReload = FoldModel(preferences: preferences)
-        precondition(resetReload.showDockIcon && resetReload.enableAtLaunch && resetReload.autoCalibrate)
+        precondition(resetReload.showDockIcon && resetReload.enableAtLaunch && resetReload.autoCalibrate && resetReload.autoCalibrationDelay == 5)
         precondition(resetReload.trigger == 90 && resetReload.fadeStrength == 0.5 && resetReload.holdToReset)
         let defaults = FoldModel(preferences: preferences)
         defaults.trigger = 130; defaults.blurStrength = 0; defaults.autoCalibrate = true

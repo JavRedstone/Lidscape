@@ -143,7 +143,7 @@ For a comfortable working position, set **Distance**, position the lid, look str
 | Manual eye height | 30 cm | Eye height above the hinge; calibration replaces this estimate. |
 | Preview zero | Lid closed | Choose Edge-on to eyes to end the slider where the panel aligns with the eye-to-hinge line. |
 | Auto-calibrate when the lid settles | On | Calibrates once per stationary hold; movement rearms it. |
-| Calibration delay | 1 s | Independent of hold-reset timing; adjustable from 0.5–8 s. |
+| Calibration delay | 5 s | Independent of hold-reset timing; adjustable from 0.5–8 s. |
 | Minimum calibration angle | 30° | Blocks automatic calibration below this physical lid angle; adjustable from 0–120°. |
 | Smoothing | 55 ms | Response time for following angle changes; adjustable from 25–140 ms. |
 | Blur | 100% | Progressive blur strength; adjustable from 0–200%. |

@@ -231,6 +231,8 @@ final class FoldGPU {
     let queue: MTLCommandQueue
     let context: CIContext
     private(set) var texture: MTLTexture?
+    private var texturePool: [MTLTexture] = []
+    private var textureIndex = 0
     private var cachedSource: CIImage?
     private var resizedSource: CIImage?
     private var sourceWidth = 0
@@ -254,12 +256,17 @@ final class FoldGPU {
         guard let image = image(source: source, width: width, progress: progress, reference: reference,
                                 reset: reset, blur: blur, geometry: geometry) else { return nil }
         let height = Int(image.extent.height.rounded(.up))
-        if texture?.width != width || texture?.height != height {
+        if texturePool.first?.width != width || texturePool.first?.height != height {
             let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm_srgb, width: width, height: height, mipmapped: false)
             descriptor.usage = [.shaderRead, .shaderWrite, .renderTarget]
             descriptor.storageMode = .private
-            texture = device.makeTexture(descriptor: descriptor)
+            texturePool = (0..<3).compactMap { _ in device.makeTexture(descriptor: descriptor) }
+            textureIndex = 0
         }
+        guard texturePool.count == 3 else { return nil }
+        // Keep the currently displayed texture intact while producing the next.
+        textureIndex = (textureIndex + 1) % texturePool.count
+        texture = texturePool[textureIndex]
         guard let texture, let buffer = queue.makeCommandBuffer() else { return nil }
         context.render(image, to: texture, commandBuffer: buffer, bounds: CGRect(x: 0, y: 0, width: width, height: height),
                        colorSpace: CGColorSpace(name: CGColorSpace.linearSRGB)!)
@@ -566,6 +573,11 @@ final class MacBookPreview: SCNView {
         let cameraInputs = [geometry.width, geometry.height, geometry.distance, geometry.eyeHeight, sideView ? 1.0 : 0.0]
         let inputs = cameraInputs + [progress, reference, resetAmount, blurStrength, fadeStrength]
         guard modelChanged || inputs != lastInputs || lastSource !== source else { return }
+        // Commit the lid pose and matching texture together. SceneKit must not
+        // implicitly animate geometry independently of our display-link smoothing.
+        SCNTransaction.begin()
+        SCNTransaction.disableActions = true
+        defer { SCNTransaction.commit() }
         lastInputs = inputs; lastSource = source
         if modelChanged || dimensions != CGSize(width: geometry.width, height: geometry.height) { rebuild(geometry) }
         let angle = reference + (0 - reference) * progress
@@ -723,7 +735,10 @@ struct MacHardware {
         holdToReset = values["hold"] as? Bool ?? true
         holdDelay = number("holdDelay", 1, 0.5...3)
         autoCalibrate = values["auto"] as? Bool ?? true
-        autoCalibrationDelay = number("autoDelay", 1, 0.5...8)
+        autoCalibrationDelay = number("autoDelay", 5, 0.5...8)
+        if !preferences.bool(forKey: "Lidscape.calibrationDelayV2") && autoCalibrationDelay == 1 {
+            autoCalibrationDelay = 5
+        }
         minimumCalibrationAngle = number("minimum", 30, 0...120)
         eyeRelativePreview = values["eyeRelative"] as? Bool ?? false
         showDockIcon = values["showDockIcon"] as? Bool ?? true
@@ -739,7 +754,7 @@ struct MacHardware {
         geometry = ViewingGeometry(); refreshDisplaySize()
         trigger = 90; smoothing = 0.055; blurStrength = 1; fadeStrength = 0.5
         holdToReset = true; holdDelay = 1
-        autoCalibrate = true; enableAtLaunch = true; autoCalibrationDelay = 1; minimumCalibrationAngle = 30
+        autoCalibrate = true; enableAtLaunch = true; autoCalibrationDelay = 5; minimumCalibrationAngle = 30
         eyeRelativePreview = false; preview = 0; previewEditing = false; previewPlaying = false
         previewHold = HoldResetState(); lidHold = HoldResetState(); previewReset = 0
         calibrationAngleGate = ResetAngleGate(); foldThreshold = FoldThreshold()
@@ -817,7 +832,7 @@ struct MacHardware {
     private var lastTick = ProcessInfo.processInfo.systemUptime
     private var lastSensorRead = 0.0
     private var lidSmoothing = SmoothValue()
-    @Published var autoCalibrationDelay = 1.0 { didSet { saveSettings() } }
+    @Published var autoCalibrationDelay = 5.0 { didSet { saveSettings() } }
     @Published var autoCalibrate = true {
         didSet { settledCalibration = SettledCalibration(); pendingCalibration = nil; saveSettings() }
     }
@@ -879,6 +894,8 @@ struct MacHardware {
         useDetectedModel()
         restoreSettings()
         settingsReady = true
+        preferences.set(true, forKey: "Lidscape.calibrationDelayV2")
+        saveSettings()
         DispatchQueue.main.async { [weak self] in
             self?.applyDockPreference()
             self?.startApplication()
