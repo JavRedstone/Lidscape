@@ -146,9 +146,10 @@ struct HoldResetState {
     private var heldSince = 0.0
     private var lastTime: Double?
     private(set) var amount = 0.0
+    private(set) var resuming = false
     private var wasEnabled: Bool?
     mutating func rearm() { anchor = nil }
-    mutating func update(angle: Double, now: Double, delay: Double, moving: Bool = false, enabled: Bool = true) -> Double {
+    mutating func update(angle: Double, now: Double, delay: Double, moving: Bool = false, enabled: Bool = true, canRenderReturn: Bool = true) -> Double {
         let dt = min(0.1, max(0, now - (lastTime ?? now)))
         lastTime = now
         if wasEnabled != enabled { anchor = nil; wasEnabled = enabled }
@@ -156,6 +157,10 @@ struct HoldResetState {
             anchor = angle; heldSince = now
         }
         let target = enabled && !moving && now - heldSince >= delay ? 1.0 : 0.0
+        resuming = target == 0
+        // Desktop capture is asynchronous. Keep the normal view until the new
+        // overlay can actually display the return animation.
+        if resuming && !canRenderReturn { return amount }
         amount += (target - amount) * (1 - exp(-dt / (target == 0 ? 0.085 : 0.055)))
         if abs(amount - target) < 0.003 { amount = target }
         return amount
@@ -1086,8 +1091,8 @@ struct MacHardware {
             if overlay != nil || capturing { hide() }
             return
         }
-        let reset = lidHold.update(angle: angle, now: now, delay: pendingCalibration == nil ? holdDelay : 0, enabled: holdToReset || pendingCalibration != nil)
-        if reset == 1 { if overlay != nil { hide() }; return }
+        let reset = lidHold.update(angle: angle, now: now, delay: pendingCalibration == nil ? holdDelay : 0, enabled: holdToReset || pendingCalibration != nil, canRenderReturn: canvas != nil)
+        if reset == 1 && !lidHold.resuming { if overlay != nil { hide() }; return }
         progress = lidSmoothing.advance(to: target, dt: dt, response: smoothing)
         if let canvas { canvas.resetAmount = reset; canvas.blurStrength = blurStrength; canvas.fadeStrength = fadeStrength; canvas.geometry = geometry; canvas.referenceDegrees = trigger; canvas.progress = progress; canvas.draw(); return }
         guard !capturing, target > 0 else { return }
@@ -1105,7 +1110,7 @@ struct MacHardware {
                 config.width = display.width; config.height = display.height; config.showsCursor = false
                 let filter = SCContentFilter(display: display, excludingWindows: [])
                 let shot = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-                guard enabled, !suspended, lidHold.amount < 1, generation == token, foldThreshold.active, let latest = self.angle, latest < trigger + 1.5 else { return }
+                guard enabled, !suspended, (lidHold.amount < 1 || lidHold.resuming), generation == token, foldThreshold.active, let latest = self.angle, latest < trigger + 1.5 else { return }
                 let window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
                 window.isReleasedWhenClosed = false
                 window.level = .screenSaver

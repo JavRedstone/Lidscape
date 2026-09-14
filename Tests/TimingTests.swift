@@ -7,6 +7,19 @@ import Foundation
         for _ in 0..<600 { _ = playback.advance(dt: 0.01, holdDelay: 1) }
         precondition(playback.value == 0 && playback.pauseRemaining > 0)
 
+  var hold = HoldResetState()
+  for step in 0...240 { _ = hold.update(angle: 70, now: Double(step)/120, delay: 1) }
+  precondition(hold.amount == 1)
+  // Capture latency must not consume the return transition offscreen.
+  for step in 241...300 {
+   precondition(hold.update(angle: 60, now: Double(step)/120, delay: 1, canRenderReturn: false) == 1)
+   precondition(hold.resuming)
+  }
+  let firstVisible = hold.update(angle: 60, now: 301.0/120, delay: 1)
+  precondition(firstVisible > 0.8 && firstVisible < 1)
+  let nextVisible = hold.update(angle: 60, now: 302.0/120, delay: 1)
+  precondition(nextVisible < firstVisible && nextVisible > 0)
+
   var results:[Double]=[]
   for fps in [30,60,120] {
    var value=SmoothValue()
