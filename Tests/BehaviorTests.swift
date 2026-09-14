@@ -11,24 +11,24 @@ import SceneKit
         let preferences = UserDefaults(suiteName: suite)!
         defer { preferences.removePersistentDomain(forName: suite) }
         let saved = FoldModel(preferences: preferences)
-        saved.showDockIcon = false; saved.trigger = 112; saved.geometry.distance = 720; saved.fadeStrength = 1.3
+        saved.enableAtLaunch = false; saved.showDockIcon = false; saved.trigger = 112; saved.geometry.distance = 720; saved.fadeStrength = 1.3
         saved.previewModel = "MacBookAir15"; saved.previewColor = "Midnight"
         saved.holdToReset = false; saved.autoCalibrationDelay = 2.4
         let restored = FoldModel(preferences: preferences)
-        precondition(!restored.showDockIcon)
+        precondition(!restored.showDockIcon && !restored.enableAtLaunch)
         precondition(restored.trigger == 112 && restored.geometry.distance == 720 && restored.fadeStrength == 1.3)
         precondition(restored.previewModel == "MacBookAir15" && restored.previewColor == "Midnight")
         precondition(!restored.holdToReset && restored.autoCalibrationDelay == 2.4)
         restored.resetSettings()
         let resetReload = FoldModel(preferences: preferences)
-        precondition(resetReload.showDockIcon)
+        precondition(resetReload.showDockIcon && resetReload.enableAtLaunch && resetReload.autoCalibrate)
         precondition(resetReload.trigger == 90 && resetReload.fadeStrength == 0.5 && resetReload.holdToReset)
         let defaults = FoldModel(preferences: preferences)
         defaults.trigger = 130; defaults.blurStrength = 0; defaults.autoCalibrate = true
         defaults.minimumCalibrationAngle = 80; defaults.holdToReset = false
         defaults.resetSettings()
         precondition(defaults.trigger == 90 && defaults.blurStrength == 1)
-        precondition(!defaults.autoCalibrate && defaults.minimumCalibrationAngle == 30 && defaults.holdToReset)
+        precondition(defaults.autoCalibrate && defaults.minimumCalibrationAngle == 30 && defaults.holdToReset)
         let geometry = ViewingGeometry()
         let edge = geometry.edgeOnDegrees * .pi / 180
         // At edge-on the screen normal is perpendicular to the eye vector.

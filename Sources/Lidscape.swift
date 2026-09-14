@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 import SwiftUI
 import SceneKit
 import MetalKit
@@ -635,6 +636,55 @@ struct MacHardware {
 @MainActor final class FoldModel: NSObject, ObservableObject {
     private let preferences: UserDefaults
     private var settingsReady = false
+    @Published var enableAtLaunch = true { didSet { saveSettings() } }
+    @Published var launchAtLogin = false
+    @Published var loginNeedsApproval = false
+    @Published var menuStatus = "Paused"
+    var menuStatusColor: Color {
+        switch menuStatus {
+        case "Ready", "Folding", "Returning to normal": return .green
+        case "Paused": return .secondary
+        default: return .orange
+        }
+    }
+    private func refreshMenuStatus() {
+        let next: String
+        if checkingCapture { next = "Checking access" }
+        else if needsScreenPermission { next = "Permission needed" }
+        else if !enabled { next = "Paused" }
+        else if angle == nil { next = "No lid sensor" }
+        else if overlay != nil { next = lidHold.amount > 0.01 ? "Returning to normal" : "Folding" }
+        else { next = "Ready" }
+        if menuStatus != next { menuStatus = next }
+    }
+    func refreshLoginStatus() {
+        launchAtLogin = SMAppService.mainApp.status == .enabled
+        loginNeedsApproval = SMAppService.mainApp.status == .requiresApproval
+    }
+    func setLaunchAtLogin(_ value: Bool) {
+        do {
+            if value { try SMAppService.mainApp.register() }
+            else { try SMAppService.mainApp.unregister() }
+            refreshLoginStatus()
+            if loginNeedsApproval { SMAppService.openSystemSettingsLoginItems() }
+        } catch { status = "Could not update launch at login: \(error.localizedDescription)"; refreshLoginStatus() }
+    }
+    private func startApplication() {
+        guard Bundle.main.bundleIdentifier == "local.macfold.app" else { return }
+        refreshLoginStatus()
+        if !preferences.bool(forKey: "Lidscape.setupComplete") {
+            let alert = NSAlert()
+            alert.messageText = "Welcome to Lidscape"
+            alert.informativeText = "Lidscape uses Screen Recording to animate your desktop as the lid moves. macOS will ask for access if needed. Auto-calibration is on by default. Would you also like Lidscape to launch when you log in?"
+            alert.addButton(withTitle: "Enable launch at login")
+            alert.addButton(withTitle: "Not now")
+            NSApp.activate(ignoringOtherApps: true)
+            let response = alert.runModal()
+            preferences.set(true, forKey: "Lidscape.setupComplete")
+            if response == .alertFirstButtonReturn { setLaunchAtLogin(true) }
+        }
+        if enableAtLaunch { setEnabled(true) }
+    }
     @Published var showDockIcon = true {
         didSet {
             saveSettings()
@@ -649,7 +699,7 @@ struct MacHardware {
     private func saveSettings() {
         guard settingsReady else { return }
         preferences.set([
-            "model": previewModel, "color": previewColor, "showDockIcon": showDockIcon,
+            "enableAtLaunch": enableAtLaunch, "model": previewModel, "color": previewColor, "showDockIcon": showDockIcon,
             "distance": geometry.distance, "eyeHeight": geometry.eyeHeight,
             "trigger": trigger, "smoothing": smoothing, "blur": blurStrength, "fade": fadeStrength,
             "hold": holdToReset, "holdDelay": holdDelay,
@@ -672,11 +722,12 @@ struct MacHardware {
         blurStrength = number("blur", 1, 0...2); fadeStrength = number("fade", 0.5, 0...2)
         holdToReset = values["hold"] as? Bool ?? true
         holdDelay = number("holdDelay", 1, 0.5...3)
-        autoCalibrate = values["auto"] as? Bool ?? false
+        autoCalibrate = values["auto"] as? Bool ?? true
         autoCalibrationDelay = number("autoDelay", 1, 0.5...8)
         minimumCalibrationAngle = number("minimum", 30, 0...120)
         eyeRelativePreview = values["eyeRelative"] as? Bool ?? false
         showDockIcon = values["showDockIcon"] as? Bool ?? true
+        enableAtLaunch = values["enableAtLaunch"] as? Bool ?? true
     }
     let hardwareIdentifier = MacHardware.identifier
     func useDetectedModel() {
@@ -688,7 +739,7 @@ struct MacHardware {
         geometry = ViewingGeometry(); refreshDisplaySize()
         trigger = 90; smoothing = 0.055; blurStrength = 1; fadeStrength = 0.5
         holdToReset = true; holdDelay = 1
-        autoCalibrate = false; autoCalibrationDelay = 1; minimumCalibrationAngle = 30
+        autoCalibrate = true; enableAtLaunch = true; autoCalibrationDelay = 1; minimumCalibrationAngle = 30
         eyeRelativePreview = false; preview = 0; previewEditing = false; previewPlaying = false
         previewHold = HoldResetState(); lidHold = HoldResetState(); previewReset = 0
         calibrationAngleGate = ResetAngleGate(); foldThreshold = FoldThreshold()
@@ -767,7 +818,7 @@ struct MacHardware {
     private var lastSensorRead = 0.0
     private var lidSmoothing = SmoothValue()
     @Published var autoCalibrationDelay = 1.0 { didSet { saveSettings() } }
-    @Published var autoCalibrate = false {
+    @Published var autoCalibrate = true {
         didSet { settledCalibration = SettledCalibration(); pendingCalibration = nil; saveSettings() }
     }
     private var settledCalibration = SettledCalibration()
@@ -828,13 +879,22 @@ struct MacHardware {
         useDetectedModel()
         restoreSettings()
         settingsReady = true
-        DispatchQueue.main.async { [weak self] in self?.applyDockPreference() }
+        DispatchQueue.main.async { [weak self] in
+            self?.applyDockPreference()
+            self?.startApplication()
+        }
         if let screen = NSScreen.screens.first(where: { $0.maximumFramesPerSecond > 60 }) ?? NSScreen.main {
             refreshRate = screen.maximumFramesPerSecond
             let link = screen.displayLink(target: self, selector: #selector(displayTick))
             link.preferredFrameRateRange = CAFrameRateRange(minimum: Float(min(80, refreshRate)), maximum: Float(refreshRate), preferred: Float(refreshRate))
             link.add(to: .main, forMode: .common)
             displayLink = link
+        }
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard Bundle.main.bundleIdentifier == "local.macfold.app" else { return }
+                self?.refreshLoginStatus()
+            }
         }
         let center = NSWorkspace.shared.notificationCenter
         center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
@@ -907,6 +967,7 @@ struct MacHardware {
     }
     @objc private func displayTick(_ link: CADisplayLink) { tick() }
     private func tick() {
+        defer { refreshMenuStatus() }
         let now = ProcessInfo.processInfo.systemUptime
         let dt = min(0.1, now - lastTick); lastTick = now
         if previewPlaying {
@@ -1054,6 +1115,11 @@ struct SettingsView: View {
                 GroupBox("App behavior") {
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle("Show Dock icon", isOn: $model.showDockIcon)
+                        Toggle("Enable animation on launch", isOn: $model.enableAtLaunch)
+                        Toggle("Launch at login", isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) }))
+                        if model.loginNeedsApproval {
+                            Button("Approve in Login Items…") { SMAppService.openSystemSettingsLoginItems() }
+                        }
                         Text("When off, Lidscape stays in the menu bar. Use its laptop icon to open Settings or quit.").font(.caption).foregroundStyle(.secondary)
                     }.padding(8)
                 }
@@ -1102,6 +1168,8 @@ struct LidscapeMenu: View {
     @ObservedObject var model: FoldModel
     @Environment(\.openWindow) private var openWindow
     var body: some View {
+        Text("Lidscape · " + model.menuStatus)
+        Divider()
         Button(model.enabled ? "Pause animation" : "Enable animation") { model.setEnabled(!model.enabled) }
         Button("Open Lidscape…") {
             openWindow(id: "settings")
@@ -1116,8 +1184,14 @@ struct LidscapeMenu: View {
     @StateObject private var model = FoldModel()
     var body: some Scene {
         Window("Lidscape", id: "settings") { SettingsView(model: model) }.windowResizability(.contentSize)
-        MenuBarExtra("Lidscape", systemImage: "laptopcomputer") {
+        MenuBarExtra {
             LidscapeMenu(model: model)
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "laptopcomputer")
+                Image(systemName: "circle.fill").font(.system(size: 6)).foregroundStyle(model.menuStatusColor)
+            }.help("Lidscape · " + model.menuStatus)
+                .accessibilityLabel("Lidscape · " + model.menuStatus)
         }
         Settings { SettingsView(model: model) }
     }

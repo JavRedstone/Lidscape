@@ -46,7 +46,9 @@ open "build/Lidscape.app"
 
 Apple model files are optional and not included in the repository. See [local model setup](Resources/Models/README.md).
 
-The build uses an available Apple Development signing identity (or `LIDSCAPE_SIGN_IDENTITY`), falling back to ad-hoc signing if none is available. It creates an app in `build/` and bundles the local USDZ assets from `Resources/Models/`. It does not install a login item or change system settings.
+On first launch, Lidscape explains Screen Recording and offers **Launch at login**. It tries to enable animation automatically; grant access when macOS asks. Startup options are in **Settings → App behavior**. Existing saved calibration choices are preserved.
+
+The build uses an available Apple Development signing identity (or `LIDSCAPE_SIGN_IDENTITY`), falling back to ad-hoc signing if none is available. It creates an app in `build/` and bundles the local USDZ assets from `Resources/Models/`. Building does not register a login item; Launch at login is offered inside the app.
 
 ## Add an app icon
 
@@ -127,6 +129,8 @@ The preview demonstrates folding, holding, and returning to normal. Its play but
 
 ## Menu bar mode
 
+The laptop icon includes a status dot: **green** when ready or animating, **gray** when paused, and **orange** while checking access, awaiting permission, or missing a sensor. Open the menu for the exact status.
+
 In **Settings → App behavior**, turn off **Show Dock icon** to run Lidscape from the menu bar only. This also removes it from the Command-Tab app switcher. The preference survives relaunch. Use the laptop menu bar icon → **Open Lidscape…** to reopen the window, or **Quit Lidscape** to exit. Turn Show Dock icon back on to restore normal Dock behavior.
 
 ## Settings and calibration
@@ -138,7 +142,7 @@ For a comfortable working position, set **Distance**, position the lid, look str
 | Distance | 55 cm | Horizontal distance from the hinge plane to your eyes. |
 | Manual eye height | 30 cm | Eye height above the hinge; calibration replaces this estimate. |
 | Preview zero | Lid closed | Choose Edge-on to eyes to end the slider where the panel aligns with the eye-to-hinge line. |
-| Auto-calibrate when the lid settles | Off | Calibrates once per stationary hold; movement rearms it. |
+| Auto-calibrate when the lid settles | On | Calibrates once per stationary hold; movement rearms it. |
 | Calibration delay | 1 s | Independent of hold-reset timing; adjustable from 0.5–8 s. |
 | Minimum calibration angle | 30° | Blocks automatic calibration below this physical lid angle; adjustable from 0–120°. |
 | Smoothing | 55 ms | Response time for following angle changes; adjustable from 25–140 ms. |
@@ -152,7 +156,7 @@ Both manual and automatic calibration require sensor angles between **60° and 1
 
 Auto-calibration and hold reset are independent. If calibration is pending during an active overlay, the image returns to normal before the new calibration is applied, even when Hold to reset is off. The minimum calibration angle does **not** restrict hold reset or the fold effect.
 
-**Reset settings** restores the defaults above, resets the preview and camera, reselects the detected model family, and turns Desktop effect off. It does not revoke macOS permissions. Settings save automatically in macOS preferences and survive quitting. Model, color, viewing position, calibration, smoothing, blur, fade, and hold options are restored. Live preview position and the Desktop effect enable switch start fresh each launch. Reset settings also saves the restored defaults.
+**Reset settings** restores the defaults above, resets the preview and camera, reselects the detected model family, and turns Desktop effect off. It does not revoke macOS permissions. Settings save automatically in macOS preferences and survive quitting. Model, color, viewing position, calibration, smoothing, blur, fade, and hold options are restored. The preview position starts fresh each launch. Enable animation on launch defaults to on; Lidscape checks Screen Recording access before activating. Reset settings also saves the restored defaults.
 
 ## How the effect works
 
