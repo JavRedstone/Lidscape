@@ -81,6 +81,39 @@ struct LidAngleFilter {
     }
 }
 
+// HID feature reports can block. Sample independently of drawing, and expose
+// only the newest filtered reading rather than queuing UI work for every report.
+final class LidSampler {
+    private let queue = DispatchQueue(label: "Lidscape.lid-sensor", qos: .userInteractive)
+    private let lock = NSLock()
+    private var timer: DispatchSourceTimer?
+    private var sensor: LidSensor?
+    private var filter = LidAngleFilter()
+    private var value: Double?
+    private var timestamp = 0.0
+    init() {
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: 1.0 / 60, leeway: .milliseconds(1))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            if self.sensor == nil { self.sensor = LidSensor() }
+            let raw = self.sensor?.read()
+            let now = ProcessInfo.processInfo.systemUptime
+            let reading = self.filter.update(raw, now: now)
+            self.lock.lock(); self.value = reading; self.timestamp = now; self.lock.unlock()
+        }
+        self.timer = timer; timer.resume()
+    }
+    deinit { timer?.cancel() }
+    func latest(now: Double = ProcessInfo.processInfo.systemUptime) -> Double? {
+        lock.lock(); defer { lock.unlock() }
+        return now - timestamp <= 0.15 ? value : nil
+    }
+    func restart() {
+        queue.async { [weak self] in self?.sensor = nil; self?.filter = LidAngleFilter() }
+    }
+}
+
 struct FoldThreshold {
     private(set) var active = false
     private var previousThreshold: Double?
@@ -828,12 +861,10 @@ struct MacHardware {
     }
     @Published var status = "Preview is ready. Enable lid animation to use your desktop."
     let artwork: CIImage
-    private var sensor = LidSensor()
-    private var angleFilter = LidAngleFilter()
+    private let sampler = LidSampler()
     private var foldThreshold = FoldThreshold()
     private var displayLink: CADisplayLink?
     private var lastTick = ProcessInfo.processInfo.systemUptime
-    private var lastSensorRead = 0.0
     private var lidSmoothing = SmoothValue()
     @Published var autoCalibrationDelay = 5.0 { didSet { saveSettings() } }
     @Published var autoCalibrate = true {
@@ -921,14 +952,14 @@ struct MacHardware {
             MainActor.assumeIsolated { self?.suspended = true; self?.hide() }
         }
         center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.suspended = false; self?.sensor = LidSensor(); self?.angleFilter = LidAngleFilter(); self?.foldThreshold = FoldThreshold() }
+            MainActor.assumeIsolated { self?.suspended = false; self?.sampler.restart(); self?.foldThreshold = FoldThreshold() }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.hide(); self?.refreshDisplaySize() }
         }
     }
     func calibrateFromLid() {
-        guard let current = sensor.read(), (60...150).contains(current) else {
+        guard let current = sampler.latest(), (60...150).contains(current) else {
             status = "Calibration needs a sensor reading with the lid between 60° and 150°."; return
         }
         applyCalibration(current)
@@ -997,11 +1028,8 @@ struct MacHardware {
         }
         let previewAmount = previewHold.update(angle: previewLidAngle, now: now, delay: holdDelay, moving: previewEditing, enabled: holdToReset)
         if previewAmount != previewReset { previewReset = previewAmount }
-        if now - lastSensorRead >= 1.0 / 60 {
-            lastSensorRead = now
-            let reading = angleFilter.update(sensor.read(), now: now)
-            if reading != angle { angle = reading }
-        }
+        let reading = sampler.latest(now: now)
+        if reading != angle { angle = reading }
         let canAutoCalibrate = angle.map { calibrationAngleGate.update(angle: $0, minimum: minimumCalibrationAngle) } ?? false
         if !canAutoCalibrate { pendingCalibration = nil; settledCalibration = SettledCalibration() }
         if autoCalibrate && !suspended && canAutoCalibrate {
