@@ -84,7 +84,7 @@ struct LidAngleFilter {
 // HID feature reports can block. Sample independently of drawing, and expose
 // only the newest filtered reading rather than queuing UI work for every report.
 final class LidSampler {
-    private let queue = DispatchQueue(label: "Lidscape.lid-sensor", qos: .userInteractive)
+    private let queue = DispatchQueue(label: "Lidscape.lid-sensor", qos: .userInteractive, autoreleaseFrequency: .workItem)
     private let lock = NSLock()
     private var timer: DispatchSourceTimer?
     private var sensor: LidSensor?
@@ -272,7 +272,12 @@ final class FoldGPU {
     private(set) var lastGPUSeconds = 0.0
     init(device: MTLDevice = MTLCreateSystemDefaultDevice()!, queue: MTLCommandQueue? = nil) {
         self.device = device; self.queue = queue ?? device.makeCommandQueue()!
-        context = CIContext(mtlDevice: device, options: [.cacheIntermediates: true])
+        context = CIContext(mtlDevice: device, options: [.cacheIntermediates: false])
+    }
+    func releaseResources() {
+        context.clearCaches()
+        cachedSource = nil; resizedSource = nil
+        texture = nil; texturePool.removeAll()
     }
     func image(source: CIImage, width: Int, progress: Double, reference: Double,
                reset: Double, blur: Double, geometry: ViewingGeometry) -> CIImage? {
@@ -321,6 +326,10 @@ final class MetalFoldView: MTKView, MTKViewDelegate {
     var referenceDegrees = 90.0
     var geometry = ViewingGeometry()
     private let gpu = FoldGPU()
+    func stopRendering() {
+        isPaused = true; delegate = nil; source = nil
+        gpu.releaseResources()
+    }
     override init(frame: NSRect, device: MTLDevice? = nil) {
         super.init(frame: frame, device: gpu.device)
         framebufferOnly = false
@@ -386,6 +395,12 @@ struct SmoothValue {
     }
 }
 
+final class FrameTickTarget: NSObject {
+    let action: () -> Void
+    init(_ action: @escaping () -> Void) { self.action = action }
+    @objc func tick(_ link: CADisplayLink) { autoreleasepool { action() } }
+}
+
 final class MacBookPreview: SCNView {
     private var animationLink: CADisplayLink?
     private var animationFrame: ((Double) -> Void)?
@@ -396,17 +411,19 @@ final class MacBookPreview: SCNView {
         animationLink?.invalidate(); animationLink = nil
         guard let display = window?.screen else { return }
         animationTime = ProcessInfo.processInfo.systemUptime
-        let link = display.displayLink(target: self, selector: #selector(animatePreview))
+        let target = FrameTickTarget { [weak self] in self?.animatePreview() }
+        let link = display.displayLink(target: target, selector: #selector(FrameTickTarget.tick))
         let rate = Float(display.maximumFramesPerSecond)
         link.preferredFrameRateRange = CAFrameRateRange(minimum: min(80, rate), maximum: rate, preferred: rate)
         link.add(to: .main, forMode: .common)
         animationLink = link
     }
-    @objc private func animatePreview(_ link: CADisplayLink) {
+    private func animatePreview() {
         let now = ProcessInfo.processInfo.systemUptime
         let dt = min(0.1, now - animationTime); animationTime = now
         animationFrame?(dt)
     }
+    deinit { animationLink?.invalidate() }
     private let lid = SCNNode()
     private let screen = SCNNode()
     private let cameraNode = SCNNode()
@@ -948,7 +965,8 @@ struct MacHardware {
         }
         if let screen = NSScreen.screens.first(where: { $0.maximumFramesPerSecond > 60 }) ?? NSScreen.main {
             refreshRate = screen.maximumFramesPerSecond
-            let link = screen.displayLink(target: self, selector: #selector(displayTick))
+            let target = FrameTickTarget { [weak self] in self?.tick() }
+            let link = screen.displayLink(target: target, selector: #selector(FrameTickTarget.tick))
             link.preferredFrameRateRange = CAFrameRateRange(minimum: Float(min(80, refreshRate)), maximum: Float(refreshRate), preferred: Float(refreshRate))
             link.add(to: .main, forMode: .common)
             displayLink = link
@@ -1026,9 +1044,13 @@ struct MacHardware {
     }
     private func hide() {
         generation += 1
-        overlay?.orderOut(nil); overlay = nil; canvas = nil; progress = 0; lidSmoothing = SmoothValue()
+        canvas?.stopRendering()
+        overlay?.orderOut(nil)
+        overlay?.contentView = nil
+        overlay?.close()
+        overlay = nil; canvas = nil; progress = 0; lidSmoothing = SmoothValue()
     }
-    @objc private func displayTick(_ link: CADisplayLink) { tick() }
+    deinit { displayLink?.invalidate() }
     private func tick() {
         defer { refreshMenuStatus() }
         let now = ProcessInfo.processInfo.systemUptime
@@ -1085,6 +1107,7 @@ struct MacHardware {
                 let shot = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
                 guard enabled, !suspended, lidHold.amount < 1, generation == token, foldThreshold.active, let latest = self.angle, latest < trigger + 1.5 else { return }
                 let window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
                 window.level = .screenSaver
                 window.ignoresMouseEvents = true
                 window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]

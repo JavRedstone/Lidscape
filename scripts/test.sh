@@ -17,3 +17,6 @@ swiftc -parse-as-library -module-cache-path build/module-cache build/TestSupport
 
 swiftc -parse-as-library -module-cache-path build/module-cache build/TestSupport.swift Tests/JitterTests.swift -o build/jitter-tests
 ./build/jitter-tests
+
+swiftc -parse-as-library -module-cache-path build/module-cache build/TestSupport.swift Tests/LifetimeTests.swift -o build/lifetime-tests
+./build/lifetime-tests

@@ -22,7 +22,11 @@ final class FrameCounter: NSObject, SCNSceneRendererDelegate {
  @MainActor static func main() {
   _ = NSApplication.shared
   NSApp.setActivationPolicy(.accessory)
-  let model=FoldModel()
+  let suite="Lidscape.benchmark."+UUID().uuidString
+  let prefs=UserDefaults(suiteName:suite)!
+  defer { prefs.removePersistentDomain(forName:suite) }
+  let model=FoldModel(preferences:prefs)
+  model.autoCalibrate=false
   let host = NSHostingView(rootView: SettingsView(model: model))
   host.frame = NSRect(x:0,y:0,width:690,height:680)
   func findPreview(_ root:NSView) -> MacBookPreview? {
@@ -40,7 +44,15 @@ final class FrameCounter: NSObject, SCNSceneRendererDelegate {
   let link=view.displayLink(target:driver,selector:#selector(Driver.tick))
   link.preferredFrameRateRange=CAFrameRateRange(minimum:80,maximum:120,preferred:120)
   link.add(to:.main,forMode:.common)
-  RunLoop.main.run(until:Date().addingTimeInterval(8))
+  let duration = Double(ProcessInfo.processInfo.environment["LIDSCAPE_BENCHMARK_SECONDS"] ?? "8") ?? 8
+  let finish = Date().addingTimeInterval(duration)
+  while Date() < finish {
+   RunLoop.main.run(until:min(finish,Date().addingTimeInterval(20)))
+   counter.lock.lock();let recent=counter.stamps.filter{$0 > ProcessInfo.processInfo.systemUptime-18};counter.lock.unlock()
+   if let first=recent.first,let last=recent.last,last>first {
+    print("elapsed",Int(ProcessInfo.processInfo.systemUptime-driver.start),"fps",Double(recent.count-1)/(last-first),"Metal MB",Double(view.device?.currentAllocatedSize ?? 0)/1048576)
+   }
+  }
   link.invalidate()
   counter.lock.lock();let stamps=counter.stamps.filter{$0>driver.start+2};counter.lock.unlock()
   if let first=stamps.first,let last=stamps.last {

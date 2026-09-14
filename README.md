@@ -196,6 +196,8 @@ Tests cover projection geometry, calibration, reset defaults, hardware mapping, 
 
 To regenerate the README animation, run `./scripts/record-preview.sh` (requires FFmpeg, a graphical macOS session, and optional local Apple models for the illustrated shell). It renders a deterministic sequence at 25 fps; this GIF frame rate is independent of the app’s rendering target.
 
+For a sustained run, use `LIDSCAPE_BENCHMARK_SECONDS=120 ./scripts/benchmark.sh`. It reports frame cadence and Metal allocation samples; teardown checks also verify that discarded models and preview views are released.
+
 The benchmark opens the full SwiftUI preview and simulates slider changes. A local run measured approximately **120 SceneKit render callbacks/s**, with a **9.26 ms p95 frame interval**, over six seconds after warm-up. This measures simulated input and render cadence, not end-to-end physical mouse latency or live desktop capture performance. Frame rate depends on hardware, display refresh rate, and system load.
 
 ## Limitations and privacy
