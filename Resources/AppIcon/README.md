@@ -1,5 +1,7 @@
 # Lidscape app icon
 
+`AppIcon.png` is a direct render of the procedural Simple model and the actual fold effect. Regenerate it with `./scripts/render-icon.sh`; no AI-generated laptop artwork is used.
+
 Put your icon here using either filename:
 
 - `AppIcon.png` — a square 1024 × 1024 PNG, preferably with transparency.

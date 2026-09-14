@@ -50,9 +50,11 @@ On first launch, Lidscape explains Screen Recording and offers **Launch at login
 
 The build uses an available Apple Development signing identity (or `LIDSCAPE_SIGN_IDENTITY`), falling back to ad-hoc signing if none is available. It creates an app in `build/` and bundles the local USDZ assets from `Resources/Models/`. Building does not register a login item; Launch at login is offered inside the app.
 
-## Add an app icon
+## App icon
 
-Place a square **1024 × 1024 PNG** at `Resources/AppIcon/AppIcon.png`, or supply `Resources/AppIcon/AppIcon.icns`. The build prefers the ICNS when both are present; otherwise it converts the PNG into the standard macOS icon sizes. Rebuild and reopen Lidscape to apply it. With no icon supplied, the app uses the default macOS application icon.
+The official icon is a direct transparent render of the app’s **Simple** laptop model with the actual screen effect. Regenerate it with `./scripts/render-icon.sh`.
+
+To use your own icon, place a square **1024 × 1024 PNG** at `Resources/AppIcon/AppIcon.png`, or supply `Resources/AppIcon/AppIcon.icns`. The build prefers the ICNS when both are present; otherwise it converts the PNG into the standard macOS icon sizes. Rebuild and reopen Lidscape to apply it. With no icon supplied, the app uses the default macOS application icon.
 
 See [the icon folder](Resources/AppIcon/README.md). This changes the application icon; the menu bar keeps its laptop symbol.
 
@@ -170,7 +172,7 @@ Sensor input uses a three-sample median and a 35 ms low-pass filter. Missing rea
 
 ## Performance and checks
 
-Animation uses `CADisplayLink` and frame-rate-independent smoothing. Preview smoothing runs inside the native preview view, avoiding a SwiftUI update for each smoothed lid frame. Sensor sampling targets 60 Hz; rendering targets the display's maximum refresh rate, including 120 Hz on supported displays.
+Animation uses `CADisplayLink` and frame-rate-independent smoothing. Preview smoothing runs inside the native preview view, avoiding a SwiftUI update for each smoothed lid frame. Sensor reports are polled at a steady 60 Hz on a dedicated queue so HID reads cannot block rendering. The display uses the latest filtered reading and smooths between reports; rendering targets the display's maximum refresh rate, including 120 Hz on supported displays.
 
 Core Image renders directly to Metal textures for SceneKit and the desktop overlay. Preview effects render at 1024 pixels wide; desktop effects at up to 1920 pixels before GPU scaling. Production rendering avoids per-frame bitmap readback. A bitmap reference renderer remains for tests.
 
