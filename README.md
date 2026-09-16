@@ -4,6 +4,12 @@
 
 Inspired by the [iPhone Duo fold animation](https://www.apple.com/iphone-duo/), Lidscape brings the same perspective, blur, and fade effects to your MacBook as you close its lid.
 
+## [⬇ Download Lidscape for Mac](https://github.com/JavRedstone/Lidscape/releases/latest)
+
+**Get the latest app from [GitHub Releases](https://github.com/JavRedstone/Lidscape/releases/latest)** — no build tools required. Under **Assets**, download the ZIP, extract it, and drag **Lidscape.app** into **Applications**.
+
+Requires **Apple Silicon · macOS 14 or later**. If macOS blocks the first launch, see the installation notes on the release page.
+
 <img src="docs/images/preview.gif" alt="Animated Lidscape preview: folding, holding still, resetting to normal, moving again, closing, and reopening" width="640">
 
 *A looping demonstration rendered with the app’s projection, blur, fade, and hold-reset logic.*
