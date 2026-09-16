@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Validate release version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo 'Release tags must have the form v1.2.3' >&2
+            exit 1
+          fi
+          echo "LIDSCAPE_VERSION=${TAG#v}" >> "$GITHUB_ENV"
+      - name: Run tests
+        run: ./scripts/test.sh
+      - name: Build app
+        env:
+          LIDSCAPE_SIGN_IDENTITY: '-'
+          LIDSCAPE_BUILD_NUMBER: ${{ github.run_number }}
+        run: ./scripts/build.sh
+      - name: Package and verify
+        run: |
+          codesign --verify --deep --strict build/Lidscape.app
+          cd build
+          archive="Lidscape-${LIDSCAPE_VERSION}-macOS-arm64.zip"
+          ditto -c -k --sequesterRsrc --keepParent Lidscape.app "$archive"
+          shasum -a 256 "$archive" > "$archive.sha256"
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            "build/Lidscape-${LIDSCAPE_VERSION}-macOS-arm64.zip" \
+            "build/Lidscape-${LIDSCAPE_VERSION}-macOS-arm64.zip.sha256" \
+            --verify-tag --title "Lidscape $TAG" --generate-notes \
+            --notes-file .github/release-notes.md

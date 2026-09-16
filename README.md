@@ -32,7 +32,26 @@ Tune the effect and calibration, save your preferences, and optionally run from 
 
 For step-by-step instructions with cropped screenshots, see the [Lidscape guide](docs/README.md): [installation](docs/getting-started.md), [preview controls](docs/preview.md), [effect settings and calibration](docs/settings.md), and [troubleshooting](docs/troubleshooting.md).
 
-## Build and run
+## Automated releases
+
+GitHub Actions runs the test suite and builds the app on branch pushes and pull requests. Pushing a version tag such as `v0.1.0` runs tests again, builds the tagged source, and publishes a [GitHub Release](https://github.com/JavRedstone/Lidscape/releases) with an Apple Silicon app ZIP, SHA-256 checksum, and generated release notes.
+
+After committing and pushing the changes you want to release:
+
+```sh
+git tag -a v0.1.0 -m "Lidscape 0.1.0"
+git push origin v0.1.0
+```
+
+Use a new `vMAJOR.MINOR.PATCH` tag for each release. The tag sets the app version; the workflow run number sets its build number. Tags with prerelease suffixes are not supported. A failed test or build prevents publication. Check the repository's Actions tab for progress. These workflows must be committed and pushed before they can run, and GitHub Actions must be enabled for the repository.
+
+Download a release ZIP, extract it, and drag `Lidscape.app` into Applications. Release builds require **Apple Silicon and macOS 14 or later**. They are ad-hoc signed, not Apple-notarized; if macOS blocks the first launch and you trust the download, use **System Settings → Privacy & Security → Open Anyway** after attempting to open it. Developer ID signing and notarization require separate Apple credentials and are not configured by this workflow. In-app automatic updates are not included.
+
+Releases use the procedural laptop preview because optional local Apple USDZ assets are not stored in Git. No additional repository secrets are required; publishing uses the workflow's built-in GitHub token.
+
+For a local versioned build, run `LIDSCAPE_VERSION=0.1.0 LIDSCAPE_BUILD_NUMBER=1 ./scripts/build.sh`. Each build replaces the generated app bundle to avoid retaining stale resources.
+
+## Build from source
 
 [GitHub repository](https://github.com/JavRedstone/Lidscape)
 

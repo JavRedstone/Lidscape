@@ -1,7 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+VERSION="${LIDSCAPE_VERSION:-0.1.0}"
+BUILD_NUMBER="${LIDSCAPE_BUILD_NUMBER:-1}"
+if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || [[ ! "$BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+    echo "Expected LIDSCAPE_VERSION=x.y.z and a positive LIDSCAPE_BUILD_NUMBER" >&2
+    exit 1
+fi
 APP="$PWD/build/Lidscape.app"
+rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" build/module-cache
 swiftc -parse-as-library -O -module-cache-path "$PWD/build/module-cache" -target arm64-apple-macos14.0 Sources/Lidscape.swift -o "$APP/Contents/MacOS/Lidscape"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
@@ -20,7 +27,10 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP/Contents/Info.plist"
 mkdir -p "$APP/Contents/Resources/Models"
+cp LICENSE THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
 for asset in Resources/Models/*.usdz; do
     [[ -f "$asset" ]] || continue
     cp "$asset" "$APP/Contents/Resources/Models/"
