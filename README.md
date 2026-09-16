@@ -34,71 +34,32 @@ Tune the effect and calibration, save your preferences, and optionally run from 
 
 </details>
 
+## Features
+
+- **Lid-driven desktop animation:** perspective, progressive blur, and fading respond as you close your MacBook.
+- **Hold to reset:** stop moving the lid to smoothly return to your normal desktop.
+- **Automatic calibration:** let your screen settle at a comfortable angle to set a new starting position.
+- **Interactive 3D preview:** try the effect with a slider or automatic playback, even without a supported lid sensor.
+- **Adjustable effects:** tune blur, fade, smoothing, viewing distance, and reset timing.
+- **Menu bar and startup controls:** hide the Dock icon, pause from the menu bar, or launch at login.
+
+## Install and get started
+
+1. Download the ZIP from the [latest release](https://github.com/JavRedstone/Lidscape/releases/latest) and extract it.
+2. Drag **Lidscape.app** into **Applications**. Quit any older copy before replacing it.
+3. Open Lidscape. Releases are not Apple-notarized; if macOS blocks the first launch and you trust the download, use **System Settings → Privacy & Security → Open Anyway** after attempting to open it.
+4. Grant **Screen Recording** access when prompted. If needed, enable the Applications copy in **System Settings → Privacy & Security → Screen & System Audio Recording**, then quit and reopen it.
+5. Try the **Preview** tab, or enable **Desktop effect** and slowly move your MacBook’s lid.
+
+Lidscape offers **Launch at login** on first launch. You can change startup options in **Settings → App behavior**. It checks Screen Recording access before enabling animation.
+
+To update, download the latest release and replace the app in Applications. Saved preferences carry over. In-app automatic updates are not included.
+
+Release downloads include the **Simple** procedural laptop preview. The Apple model shells shown in some screenshots require optional local assets; see [References and model assets](#references-and-model-assets).
+
 ## User guide
 
 For step-by-step instructions with cropped screenshots, see the [Lidscape guide](docs/README.md): [installation](docs/getting-started.md), [preview controls](docs/preview.md), [effect settings and calibration](docs/settings.md), and [troubleshooting](docs/troubleshooting.md).
-
-## Automated releases
-
-GitHub Actions runs the test suite and builds the app on branch pushes and pull requests. Pushing a version tag such as `v0.1.0` runs tests again, builds the tagged source, and publishes a [GitHub Release](https://github.com/JavRedstone/Lidscape/releases) with an Apple Silicon app ZIP, SHA-256 checksum, and generated release notes.
-
-After committing and pushing the changes you want to release:
-
-```sh
-git tag -a v0.1.0 -m "Lidscape 0.1.0"
-git push origin v0.1.0
-```
-
-Use a new `vMAJOR.MINOR.PATCH` tag for each release. The tag sets the app version; the workflow run number sets its build number. Tags with prerelease suffixes are not supported. A failed test or build prevents publication. Check the repository's Actions tab for progress. These workflows must be committed and pushed before they can run, and GitHub Actions must be enabled for the repository.
-
-Download a release ZIP, extract it, and drag `Lidscape.app` into Applications. Release builds require **Apple Silicon and macOS 14 or later**. They are ad-hoc signed, not Apple-notarized; if macOS blocks the first launch and you trust the download, use **System Settings → Privacy & Security → Open Anyway** after attempting to open it. Developer ID signing and notarization require separate Apple credentials and are not configured by this workflow. In-app automatic updates are not included.
-
-Releases use the procedural laptop preview because optional local Apple USDZ assets are not stored in Git. No additional repository secrets are required; publishing uses the workflow's built-in GitHub token.
-
-For a local versioned build, run `LIDSCAPE_VERSION=0.1.0 LIDSCAPE_BUILD_NUMBER=1 ./scripts/build.sh`. Each build replaces the generated app bundle to avoid retaining stale resources.
-
-## Build from source
-
-[GitHub repository](https://github.com/JavRedstone/Lidscape)
-
-```sh
-git clone https://github.com/JavRedstone/Lidscape.git
-cd Lidscape
-```
-
-Requires **Apple Silicon**, **macOS 14 or later**, and **Xcode Command Line Tools**. Run these commands from the project directory:
-
-```sh
-./scripts/build.sh
-open "build/Lidscape.app"
-```
-
-Apple model files are optional and not included in the repository. See [local model setup](Resources/Models/README.md).
-
-On first launch, Lidscape explains Screen Recording and offers **Launch at login**. It tries to enable animation automatically; grant access when macOS asks. Startup options are in **Settings → App behavior**. Existing saved calibration choices are preserved.
-
-The build uses an available Apple Development signing identity (or `LIDSCAPE_SIGN_IDENTITY`), falling back to ad-hoc signing if none is available. It creates an app in `build/` and bundles the local USDZ assets from `Resources/Models/`. Building does not register a login item; Launch at login is offered inside the app.
-
-## Install in Applications
-
-After building, copy **`build/Lidscape.app`** into your Mac’s **Applications** folder:
-
-1. Quit any running copy of Lidscape.
-2. In Finder, drag `Lidscape.app` from the project’s `build` folder into **Applications**. When updating, replace the existing copy.
-3. Open **Applications → Lidscape** and use that copy going forward.
-4. If macOS requests Screen Recording access, enable the Applications copy in **System Settings → Privacy & Security → Screen & System Audio Recording**, then quit and reopen Lidscape if prompted.
-
-Set **Launch at login** from the installed copy in **Settings → App behavior**. Saved preferences carry over because the app keeps the same bundle identifier. Future builds still appear in `build/`; repeat these steps to install an update.
-
-## App icon
-
-The official icon is a direct transparent render of the app’s **Simple** laptop model with the actual screen effect. Regenerate it with `./scripts/render-icon.sh`.
-
-To use your own icon, place a square **1024 × 1024 PNG** at `Resources/AppIcon/AppIcon.png`, or supply `Resources/AppIcon/AppIcon.icns`. The build prefers the ICNS when both are present; otherwise it converts the PNG into the standard macOS icon sizes. Rebuild and reopen Lidscape to apply it. With no icon supplied, the app uses the default macOS application icon.
-
-See [the icon folder](Resources/AppIcon/README.md). This changes the application icon; the menu bar keeps its laptop symbol.
-
-The app retains its original bundle identifier (`local.macfold.app`) across the rename to preserve its identity. The build output is now `build/Lidscape.app`; any older `build/Mac Fold.app` is a separate, stale build.
 
 ## Try the preview
 
@@ -110,7 +71,7 @@ The **Preview** tab works without Screen Recording permission or a supported lid
 4. Press the play button beside **Lid** to sweep automatically between open and the full slider endpoint (fully closed, or edge-on in eye-relative mode), pausing at each end for the reset delay plus 0.8 seconds. Press pause or drag manually to stop. Playback stops when leaving the preview.
 5. Release the slider to try **Hold to reset**, enabled by default. After the reset delay, the image smoothly returns to normal while the lid stays in place. Dragging again smoothly restores the folded projection.
 
-Available previews:
+With optional local model assets, the available previews are:
 
 | Model | Colors |
 | --- | --- |
@@ -200,17 +161,41 @@ Auto-calibration and hold reset are independent. If calibration is pending durin
 
 **Reset settings** restores the defaults above, resets the preview and camera, reselects the detected model family, and turns Desktop effect off. It does not revoke macOS permissions. Settings save automatically in macOS preferences and survive quitting. Model, color, viewing position, calibration, smoothing, blur, fade, and hold options are restored. The preview position starts fresh each launch. Enable animation on launch defaults to on; Lidscape checks Screen Recording access before activating. Reset settings also saves the restored defaults.
 
-## How the effect works
+## Limitations and privacy
 
-The image represents a stationary plane while the physical lid rotates. A perspective shader casts a ray from the configured eye position through each panel pixel, intersects the reference image plane, and samples the image there. This accounts for vertical foreshortening and perspective width changes. Rays that miss the image are black; an adjustable fade darkens the image as the lid folds, strongest toward the top. Set Fade to black to 0% to disable it. The fade clears smoothly during hold reset.
+- The desktop is a frozen snapshot during the fold, not a live video stream. Captures stay in memory and are not saved to disk.
+- Hardware sensor availability varies. Without a valid reading, the desktop overlay stays hidden and the preview remains usable.
+- External displays are untouched. The app does not cover the secure login screen or bypass normal lid sleep. Sleep and display reconfiguration dismiss the overlay.
+- Imported hinges and the active-display-to-hinge offset are approximate. The preview is useful for evaluating the effect, not an exact mechanical simulation.
+- This is an experimental adaptation, not a frame-matched reproduction of the reference transition.
 
-Progressive blur is applied after projection: sharpest near the hinge and strongest at the top. Blur increases with fold progress. Hold reset and movement reactivation interpolate continuously between the projection and normal image. Preview hold timing starts after releasing the slider.
+## Development
 
-Display dimensions come from `CGDisplayScreenSize`, with a 302 × 196 mm fallback. The viewer is assumed horizontally centered. Eye-relative preview uses `atan2(eyeHeight, distance)` as its zero point—about 28.6° physical lid angle at the defaults. This changes the preview range and label, not sensor calibration.
+Build, test, and customize Lidscape from source, or publish a new release.
 
-Sensor input uses a three-sample median and a 35 ms low-pass filter. Missing readings have a 150 ms grace period. The desktop threshold enters 1.5° below Start below and exits 1.5° above it to avoid threshold chatter. Stationary holds use a 1.5° tolerance.
+### Build from source
 
-## Performance and checks
+[GitHub repository](https://github.com/JavRedstone/Lidscape)
+
+```sh
+git clone https://github.com/JavRedstone/Lidscape.git
+cd Lidscape
+```
+
+Requires **Apple Silicon**, **macOS 14 or later**, and **Xcode Command Line Tools**. Run these commands from the project directory:
+
+```sh
+./scripts/build.sh
+open "build/Lidscape.app"
+```
+
+Apple model files are optional and not included in the repository. See [local model setup](Resources/Models/README.md).
+
+The build uses an available Apple Development signing identity (or `LIDSCAPE_SIGN_IDENTITY`), falling back to ad-hoc signing if none is available. It creates an app in `build/` and bundles the local USDZ assets from `Resources/Models/`. Building does not register a login item; Launch at login is offered inside the app.
+
+To install your local build, quit Lidscape and copy `build/Lidscape.app` into Applications, replacing the previous copy.
+
+### Performance and checks
 
 Animation uses `CADisplayLink` and frame-rate-independent smoothing. Preview smoothing runs inside the native preview view, avoiding a SwiftUI update for each smoothed lid frame. Sensor reports are polled at a steady 60 Hz on a dedicated queue so HID reads cannot block rendering. The display uses the latest filtered reading and smooths between reports; rendering targets the display's maximum refresh rate, including 120 Hz on supported displays.
 
@@ -229,13 +214,44 @@ For a sustained run, use `LIDSCAPE_BENCHMARK_SECONDS=120 ./scripts/benchmark.sh`
 
 The benchmark opens the full SwiftUI preview and simulates slider changes. A local run measured approximately **120 SceneKit render callbacks/s**, with a **9.26 ms p95 frame interval**, over six seconds after warm-up. This measures simulated input and render cadence, not end-to-end physical mouse latency or live desktop capture performance. Frame rate depends on hardware, display refresh rate, and system load.
 
-## Limitations and privacy
+### Automated releases
 
-- The desktop is a frozen snapshot during the fold, not a live video stream. Captures stay in memory and are not saved to disk.
-- Hardware sensor availability varies. Without a valid reading, the desktop overlay stays hidden and the preview remains usable.
-- External displays are untouched. The app does not cover the secure login screen or bypass normal lid sleep. Sleep and display reconfiguration dismiss the overlay.
-- Imported hinges and the active-display-to-hinge offset are approximate. The preview is useful for evaluating the effect, not an exact mechanical simulation.
-- This is an experimental adaptation, not a frame-matched reproduction of the reference transition.
+GitHub Actions runs the test suite and builds the app on branch pushes and pull requests. Pushing a version tag such as `v0.1.1` runs tests again, builds the tagged source, and publishes a [GitHub Release](https://github.com/JavRedstone/Lidscape/releases) with an Apple Silicon app ZIP, SHA-256 checksum, and generated release notes.
+
+After committing and pushing the changes you want to release:
+
+```sh
+git tag -a v0.1.1 -m "Lidscape 0.1.1"
+git push origin v0.1.1
+```
+
+Use a new `vMAJOR.MINOR.PATCH` tag for each release. The tag sets the app version; the workflow run number sets its build number. Tags with prerelease suffixes are not supported. A failed test or build prevents publication. Check the repository's Actions tab for progress. GitHub Actions must be enabled for the repository.
+
+Release builds use ad-hoc signing. Developer ID signing and notarization require separate Apple credentials and are not configured by this workflow.
+
+Releases use the procedural laptop preview because optional local Apple USDZ assets are not stored in Git. No additional repository secrets are required; publishing uses the workflow's built-in GitHub token.
+
+For a local versioned build, run `LIDSCAPE_VERSION=0.1.0 LIDSCAPE_BUILD_NUMBER=1 ./scripts/build.sh`. Each build replaces the generated app bundle to avoid retaining stale resources.
+
+### App icon
+
+The official icon is a direct transparent render of the app’s **Simple** laptop model with the actual screen effect. Regenerate it with `./scripts/render-icon.sh`.
+
+To use your own icon, place a square **1024 × 1024 PNG** at `Resources/AppIcon/AppIcon.png`, or supply `Resources/AppIcon/AppIcon.icns`. The build prefers the ICNS when both are present; otherwise it converts the PNG into the standard macOS icon sizes. Rebuild and reopen Lidscape to apply it. With no icon supplied, the app uses the default macOS application icon.
+
+See [the icon folder](Resources/AppIcon/README.md). This changes the application icon; the menu bar keeps its laptop symbol.
+
+The app retains its original bundle identifier (`local.macfold.app`) across the rename to preserve its identity. The build output is now `build/Lidscape.app`; any older `build/Mac Fold.app` is a separate, stale build.
+
+### How the effect works
+
+The image represents a stationary plane while the physical lid rotates. A perspective shader casts a ray from the configured eye position through each panel pixel, intersects the reference image plane, and samples the image there. This accounts for vertical foreshortening and perspective width changes. Rays that miss the image are black; an adjustable fade darkens the image as the lid folds, strongest toward the top. Set Fade to black to 0% to disable it. The fade clears smoothly during hold reset.
+
+Progressive blur is applied after projection: sharpest near the hinge and strongest at the top. Blur increases with fold progress. Hold reset and movement reactivation interpolate continuously between the projection and normal image. Preview hold timing starts after releasing the slider.
+
+Display dimensions come from `CGDisplayScreenSize`, with a 302 × 196 mm fallback. The viewer is assumed horizontally centered. Eye-relative preview uses `atan2(eyeHeight, distance)` as its zero point—about 28.6° physical lid angle at the defaults. This changes the preview range and label, not sensor calibration.
+
+Sensor input uses a three-sample median and a 35 ms low-pass filter. Missing readings have a 150 ms grace period. The desktop threshold enters 1.5° below Start below and exits 1.5° above it to avoid threshold chatter. Stationary holds use a 1.5° tolerance.
 
 ## References and model assets
 
