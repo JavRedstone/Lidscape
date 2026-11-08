@@ -15,9 +15,9 @@ Requires **Apple Silicon · macOS 14 or later**. If macOS blocks the first launc
 *A looping demonstration rendered with the app’s projection, blur, fade, and hold-reset logic.*
 
 <details>
-<summary>Static fold preview</summary>
+<summary>Preview window</summary>
 
-<img src="docs/images/preview.png" alt="Lidscape preview showing perspective, progressive blur, and fading on a partially folded MacBook" width="760">
+<img src="docs/images/preview-window.jpg" alt="Current Lidscape Preview pane with the settings sidebar, automatically detected MacBook, camera controls, and lid slider" width="760">
 
 </details>
 
@@ -26,11 +26,24 @@ Move the lid to animate perspective, blur, and fading. Hold it still to smoothly
 Try the full sequence in 3D with automatic preview playback, or control it with your MacBook’s physical lid.
 
 <details>
-<summary>See the settings</summary>
+<summary>Native settings and appearance</summary>
 
-<img src="docs/images/settings.png" alt="Lidscape settings for Dock visibility, viewing position, smoothing, blur, fade, and hold reset" width="760">
+<img src="docs/images/settings.jpg" alt="Lidscape Fold Effect pane with the macOS-style sidebar, motion controls, blur, fade, and hold-to-reset settings" width="760">
 
-Tune the effect and calibration, save your preferences, and optionally run from the menu bar only.
+Tune motion, blur, fade, and hold reset in **Fold Effect**. Startup behavior, calibration, and lock-screen capture each have their own pane. Changes save automatically.
+
+<img src="docs/images/appearance.jpg" alt="Lidscape Appearance pane showing Light, Dark, and System choices and Dock visibility" width="760">
+
+Choose **Light**, **Dark**, or **System** appearance. Enable and Pause controls use native Liquid Glass on macOS 26 and later.
+
+</details>
+
+<details>
+<summary>Activity charts and history</summary>
+
+<img src="docs/images/activity.jpg" alt="Lidscape Activity pane showing today's fold count and time, live lid and starting angles, and the weekly fold chart" width="760">
+
+Track live lid angles, daily folds, and time folding. Recent history records calibration changes and enable/pause events. Nearby chart events are grouped, with exact times available on selection. History stays on your Mac and can be cleared in **Activity**.
 
 </details>
 
@@ -41,6 +54,9 @@ Tune the effect and calibration, save your preferences, and optionally run from 
 - **Automatic calibration:** let your screen settle at a comfortable angle to set a new starting position.
 - **Interactive 3D preview:** try the effect with a slider or automatic playback, even without a supported lid sensor.
 - **Adjustable effects:** tune blur, fade, smoothing, viewing distance, and reset timing.
+- **Native settings and appearance:** a macOS-style sidebar with Light, Dark, and System modes.
+- **Lock-screen folding:** include everything visible, selected apps, or system content, with readable capture diagnostics.
+- **Activity and history:** live angle charts, daily fold totals, calibration changes, and enable/pause events stored on your Mac.
 - **Menu bar control panel:** see your lid angle and animation status, toggle live capture or lock-screen folding, calibrate, and open Settings. Hide the Dock icon or launch at login.
 
 ## Install and get started
