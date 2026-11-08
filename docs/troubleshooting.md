@@ -51,3 +51,5 @@ Click the laptop menu bar icon → **Open Lidscape…**, then enable **Settings 
 ## Screen goes to sleep when closed
 
 That is normal macOS behavior. Lidscape does not prevent lid sleep or draw over the secure login screen.
+
+System sleep, display sleep, and inactive sessions stop the capture stream and dismiss the overlay. Once macOS resumes, Lidscape starts a fresh live stream if the lid is still in the effect range. There is no need to open past the start angle first. Blank or suspended capture frames hide the overlay until complete frames return. Secure lock-screen capture is not guaranteed.

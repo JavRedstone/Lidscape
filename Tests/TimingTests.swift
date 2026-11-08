@@ -20,6 +20,26 @@ import Foundation
   let nextVisible = hold.update(angle: 60, now: 302.0/120, delay: 1)
   precondition(nextVisible < firstVisible && nextVisible > 0)
 
+  // A cold stream can take longer than the hold delay to produce its first frame.
+  var coldStart = HoldResetState()
+  for step in 0...360 {
+   precondition(coldStart.update(angle: 60, now: Double(step)/120, delay: 1,
+       canRenderReturn: false, waitingForFrame: true) == 0,
+       "Stream startup must not consume the effect's visible hold interval")
+  }
+  for step in 361..<480 {
+   precondition(coldStart.update(angle: 60, now: Double(step)/120, delay: 1) == 0)
+  }
+  for step in 480...540 { _ = coldStart.update(angle: 60, now: Double(step)/120, delay: 1) }
+  precondition(coldStart.amount == 1)
+  for step in 541...900 {
+   precondition(coldStart.update(angle: 50, now: Double(step)/120, delay: 1,
+       canRenderReturn: false, waitingForFrame: true) == 1)
+   precondition(coldStart.resuming, "A slow restart must preserve the pending return animation")
+  }
+  let visibleReturn = coldStart.update(angle: 50, now: 901.0/120, delay: 1)
+  precondition(visibleReturn > 0.8 && visibleReturn < 1)
+
   var results:[Double]=[]
   for fps in [30,60,120] {
    var value=SmoothValue()

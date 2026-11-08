@@ -43,6 +43,20 @@ import Foundation
   var unrestrictedHold = HoldResetState()
   for tick in 0..<120 { _ = unrestrictedHold.update(angle:10,now:Double(tick)/60,delay:1,enabled:true) }
   precondition(unrestrictedHold.amount == 1, "Hold reset must work below the calibration minimum")
+  var resume = FoldResumeGate()
+  resume.suspend(.systemSleep)
+  resume.suspend(.displaySleep)
+  precondition(resume.suspended)
+  resume.resume(.systemSleep)
+  precondition(resume.suspended, "System wake must not override display sleep")
+  resume.resume(.displaySleep)
+  precondition(!resume.suspended, "Live capture must resume without waiting for an open lid")
+  resume.suspend(.inactiveSession)
+  resume.resume(.systemSleep)
+  precondition(resume.suspended, "Wake must not override an inactive session")
+  resume.resume(.inactiveSession)
+  precondition(!resume.suspended)
+  print("PASS: overlapping wake/session gating resumes capture immediately when active")
   print("PASS: no threshold chatter, genuine crossings, isolated spike rejection, missing-report grace, optional hold reset")
  }
 }

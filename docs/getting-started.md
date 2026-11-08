@@ -40,7 +40,7 @@ The message below the header explains whether access is being checked, permissio
 
 With Desktop effect enabled, slowly close the lid below the configured **Start below** angle. At the default 90° setting, threshold filtering starts the effect below about 88.5°. Stop moving for a second to see hold reset return your desktop to normal. Move again to reactivate it.
 
-The overlay shows a frozen desktop snapshot during the transition. Once reset finishes or you open past the threshold, your live desktop resumes. The app does not prevent normal lid sleep.
+The overlay shows live desktop content during the transition, captured at up to 60 frames per second. Once reset finishes or you open past the threshold, the overlay disappears and capture stops. Lidscape’s own windows are excluded from capture to prevent visual feedback. The app does not prevent normal lid sleep.
 
 ## 5. Choose startup and Dock behavior
 

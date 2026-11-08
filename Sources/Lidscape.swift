@@ -5,6 +5,7 @@ import SceneKit
 import MetalKit
 import IOKit.hid
 import ScreenCaptureKit
+import CoreMedia
 import CoreImage.CIFilterBuiltins
 
 // HID feature report documented by samhenrigold/LidAngleSensor.
@@ -110,7 +111,82 @@ final class LidSampler {
         return now - timestamp <= 0.15 ? value : nil
     }
     func restart() {
+        lock.lock(); value = nil; timestamp = 0; lock.unlock()
         queue.async { [weak self] in self?.sensor = nil; self?.filter = LidAngleFilter() }
+    }
+}
+
+// Overlapping sleep/session notifications must not resume one another.
+struct FoldResumeGate {
+    enum Reason: Hashable { case systemSleep, displaySleep, inactiveSession }
+    private var reasons: Set<Reason> = []
+    var suspended: Bool { !reasons.isEmpty }
+    mutating func suspend(_ reason: Reason) {
+        reasons.insert(reason)
+    }
+    mutating func resume(_ reason: Reason) {
+        reasons.remove(reason)
+    }
+}
+
+// Keep only the newest IOSurface-backed image. The display link pulls it;
+// capture callbacks never queue one main-thread task per frame.
+final class DesktopCapture: NSObject, SCStreamOutput, SCStreamDelegate {
+    private let queue = DispatchQueue(label: "Lidscape.desktop-capture", qos: .userInteractive)
+    private let lock = NSLock()
+    private var image: CIImage?
+    private var acceptingFrames = true
+    private var failure: Error?
+    private var stream: SCStream?
+
+    @MainActor func start(filter: SCContentFilter, configuration: SCStreamConfiguration) async throws {
+        let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
+        self.stream = stream
+        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
+        try await stream.startCapture()
+        // A lid/session change can stop us while startCapture is suspended.
+        if isStopped { try? await stream.stopCapture() }
+    }
+    private var isStopped: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return !acceptingFrames
+    }
+    func stop() {
+        lock.lock(); acceptingFrames = false; image = nil; lock.unlock()
+        let previous = stream; stream = nil
+        previous?.stopCapture { _ in
+            try? previous?.removeStreamOutput(self, type: .screen)
+        }
+    }
+    func latest() -> (image: CIImage?, error: Error?) {
+        lock.lock(); defer { lock.unlock() }
+        return (image, failure)
+    }
+    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+        guard type == .screen else { return }
+        receive(sampleBuffer)
+    }
+    func receive(_ sampleBuffer: CMSampleBuffer) {
+        guard sampleBuffer.isValid,
+              let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
+              let rawStatus = attachments.first?[.status] as? Int,
+              let status = SCFrameStatus(rawValue: rawStatus) else { return }
+        lock.lock(); defer { lock.unlock() }
+        guard acceptingFrames else { return }
+        switch status {
+        case .complete:
+            guard let buffer = sampleBuffer.imageBuffer else { return }
+            image = CIImage(cvPixelBuffer: buffer)
+        case .idle:
+            break // Unchanged content is still a valid live frame.
+        default:
+            image = nil // Blank, suspended, or stopped: never display an old frame.
+        }
+    }
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        lock.lock(); defer { lock.unlock() }
+        guard acceptingFrames else { return }
+        image = nil; failure = error; acceptingFrames = false
     }
 }
 
@@ -149,14 +225,14 @@ struct HoldResetState {
     private(set) var resuming = false
     private var wasEnabled: Bool?
     mutating func rearm() { anchor = nil }
-    mutating func update(angle: Double, now: Double, delay: Double, moving: Bool = false, enabled: Bool = true, canRenderReturn: Bool = true) -> Double {
+    mutating func update(angle: Double, now: Double, delay: Double, moving: Bool = false, enabled: Bool = true, canRenderReturn: Bool = true, waitingForFrame: Bool = false) -> Double {
         let dt = min(0.1, max(0, now - (lastTime ?? now)))
         lastTime = now
         if wasEnabled != enabled { anchor = nil; wasEnabled = enabled }
-        if anchor == nil || abs(angle - anchor!) > 1.5 {
+        if waitingForFrame || anchor == nil || abs(angle - anchor!) > 1.5 {
             anchor = angle; heldSince = now
         }
-        let target = enabled && !moving && now - heldSince >= delay ? 1.0 : 0.0
+        let target = enabled && !moving && !waitingForFrame && now - heldSince >= delay ? 1.0 : 0.0
         resuming = target == 0
         // Desktop capture is asynchronous. Keep the normal view until the new
         // overlay can actually display the return animation.
@@ -323,6 +399,8 @@ final class FoldGPU {
 }
 
 final class MetalFoldView: MTKView, MTKViewDelegate {
+    private(set) var hasRenderedFrame = false
+    private var firstFramePending = false
     var fadeStrength = 0.0 { didSet { gpu.fadeStrength = fadeStrength } }
     var source: CIImage?
     var progress = 0.0
@@ -353,6 +431,17 @@ final class MetalFoldView: MTKView, MTKViewDelegate {
                                                              y: drawableSize.height / image.extent.height))
         gpu.context.render(scaled, to: drawable.texture, commandBuffer: buffer,
             bounds: CGRect(origin: .zero, size: drawableSize), colorSpace: CGColorSpaceCreateDeviceRGB())
+        if !hasRenderedFrame && !firstFramePending {
+            firstFramePending = true
+            buffer.addCompletedHandler { [weak self] completed in
+                let succeeded = completed.status == .completed
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.delegate != nil else { return }
+                    self.hasRenderedFrame = succeeded
+                    self.firstFramePending = false
+                }
+            }
+        }
         buffer.present(drawable); buffer.commit()
     }
 }
@@ -910,10 +999,15 @@ struct MacHardware {
     @Published var refreshRate = 60
     private var overlay: NSWindow?
     private var canvas: MetalFoldView?
+    private var desktopCapture: DesktopCapture?
+    private var captureScreenFrame: NSRect?
+    private var overlayReveal = SmoothValue()
     private var capturing = false
     private var generation = 0
     private var progress = 0.0
-    private var suspended = false
+    private var captureRetryAfter = 0.0
+    private var resumeGate = FoldResumeGate()
+    private var suspended: Bool { resumeGate.suspended }
     init(preferences: UserDefaults = .standard) {
         self.preferences = preferences
         // Bundle original artwork so the preview and app identity share a wallpaper.
@@ -983,15 +1077,32 @@ struct MacHardware {
             }
         }
         let center = NSWorkspace.shared.notificationCenter
-        center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.suspended = true; self?.hide() }
-        }
-        center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.suspended = false; self?.sampler.restart(); self?.foldThreshold = FoldThreshold() }
+        let lifecycleNotifications: [(Notification.Name, FoldResumeGate.Reason, Bool)] = [
+            (NSWorkspace.willSleepNotification, .systemSleep, true),
+            (NSWorkspace.didWakeNotification, .systemSleep, false),
+            (NSWorkspace.screensDidSleepNotification, .displaySleep, true),
+            (NSWorkspace.screensDidWakeNotification, .displaySleep, false),
+            (NSWorkspace.sessionDidResignActiveNotification, .inactiveSession, true),
+            (NSWorkspace.sessionDidBecomeActiveNotification, .inactiveSession, false)
+        ]
+        for (name, reason, suspending) in lifecycleNotifications {
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.handleLifecycle(reason, suspending: suspending) }
+            }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.hide(); self?.refreshDisplaySize() }
         }
+    }
+    private func handleLifecycle(_ reason: FoldResumeGate.Reason, suspending: Bool) {
+        if suspending { resumeGate.suspend(reason) }
+        else { resumeGate.resume(reason) }
+        hide()
+        sampler.restart()
+        foldThreshold = FoldThreshold()
+        lidHold = HoldResetState()
+        pendingCalibration = nil
+        settledCalibration = SettledCalibration()
     }
     func calibrateFromLid() {
         guard let current = sampler.latest(), (60...150).contains(current) else {
@@ -1047,15 +1158,34 @@ struct MacHardware {
             }
         }
     }
-    private func hide() {
-        generation += 1
+    private func dismissOverlay() {
         canvas?.stopRendering()
         overlay?.orderOut(nil)
         overlay?.contentView = nil
         overlay?.close()
-        overlay = nil; canvas = nil; progress = 0; lidSmoothing = SmoothValue()
+        overlay = nil; canvas = nil
+        overlayReveal = SmoothValue()
     }
-    deinit { displayLink?.invalidate() }
+    private func hide() {
+        generation += 1
+        desktopCapture?.stop(); desktopCapture = nil; captureScreenFrame = nil
+        dismissOverlay()
+        progress = 0; lidSmoothing = SmoothValue()
+    }
+    private func makeOverlay(frame: NSRect) {
+        let window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.level = .screenSaver
+        window.ignoresMouseEvents = true
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        // Keep the drawable attached, but visually transparent, while the first
+        // GPU frame is prepared. Ordering an opaque window first flashes black.
+        window.alphaValue = 0.001
+        let view = MetalFoldView(frame: NSRect(origin: .zero, size: frame.size))
+        window.contentView = view
+        overlay = window; canvas = view
+    }
+    deinit { displayLink?.invalidate(); desktopCapture?.stop() }
     private func tick() {
         defer { refreshMenuStatus() }
         let now = ProcessInfo.processInfo.systemUptime
@@ -1082,49 +1212,95 @@ struct MacHardware {
         }
         guard enabled, !suspended, let angle else {
             foldThreshold = FoldThreshold()
-            if overlay != nil { hide() }
+            if overlay != nil || desktopCapture != nil || capturing { hide() }
             return
         }
         let target = min(1, max(0, (trigger - angle) / trigger))
         guard foldThreshold.update(angle: angle, threshold: trigger) else {
             lidHold = HoldResetState()
-            if overlay != nil || capturing { hide() }
+            if overlay != nil || desktopCapture != nil || capturing { hide() }
             return
         }
-        let reset = lidHold.update(angle: angle, now: now, delay: pendingCalibration == nil ? holdDelay : 0, enabled: holdToReset || pendingCalibration != nil, canRenderReturn: canvas != nil)
-        if reset == 1 && !lidHold.resuming { if overlay != nil { hide() }; return }
+        let frame = desktopCapture?.latest()
+        if let error = frame?.error {
+            hide()
+            captureRetryAfter = now + 1
+            needsScreenPermission = !CGPreflightScreenCaptureAccess()
+            if needsScreenPermission { enabled = false }
+            status = "Desktop stream interrupted: \(error.localizedDescription)"
+            return
+        }
+        let canPresentFrame = frame?.image != nil && canvas?.hasRenderedFrame == true
+        let reset = lidHold.update(angle: angle, now: now, delay: pendingCalibration == nil ? holdDelay : 0,
+            enabled: holdToReset || pendingCalibration != nil, canRenderReturn: canPresentFrame,
+            waitingForFrame: !canPresentFrame && (desktopCapture != nil || capturing || lidHold.amount < 1))
+        if reset == 1 && !lidHold.resuming {
+            if overlay != nil || desktopCapture != nil || capturing { hide() }
+            return
+        }
         progress = lidSmoothing.advance(to: target, dt: dt, response: smoothing)
-        if let canvas { canvas.resetAmount = reset; canvas.blurStrength = blurStrength; canvas.fadeStrength = fadeStrength; canvas.geometry = geometry; canvas.referenceDegrees = trigger; canvas.progress = progress; canvas.draw(); return }
-        guard !capturing, target > 0 else { return }
+        if let image = frame?.image, let screenFrame = captureScreenFrame {
+            if canvas == nil { makeOverlay(frame: screenFrame); status = "Live desktop capture active." }
+            if let canvas {
+                canvas.source = image
+                canvas.resetAmount = reset; canvas.blurStrength = blurStrength; canvas.fadeStrength = fadeStrength
+                canvas.geometry = geometry; canvas.referenceDegrees = trigger; canvas.progress = progress
+                if overlay?.isVisible == false { overlay?.orderFrontRegardless() }
+                canvas.draw()
+                if canvas.hasRenderedFrame {
+                    let alpha = overlayReveal.advance(to: 1, dt: dt, response: 0.045)
+                    overlay?.alphaValue = alpha > 0.995 ? 1 : max(0.001, alpha)
+                }
+            }
+            return
+        }
+        // Do not leave the last rendered drawable visible while capture is suspended.
+        if overlay != nil { dismissOverlay() }
+        guard desktopCapture == nil, !capturing, target > 0, now >= captureRetryAfter else { return }
         capturing = true
+        status = "Starting live desktop capture…"
         let token = generation
         Task {
+            let capture = DesktopCapture()
             defer { capturing = false }
             do {
-                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                // Settings may be closed or hidden when the menu-bar app folds.
+                // Include offscreen windows so its application can still be excluded.
+                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+                guard generation == token, enabled, !suspended else { return }
                 guard let display = content.displays.first(where: { CGDisplayIsBuiltin($0.displayID) != 0 }),
                       let screen = NSScreen.screens.first(where: { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == display.displayID }) else {
+                    captureRetryAfter = ProcessInfo.processInfo.systemUptime + 1
                     status = "No built-in MacBook display found."; return
                 }
                 let config = SCStreamConfiguration()
-                config.width = display.width; config.height = display.height; config.showsCursor = false
-                let filter = SCContentFilter(display: display, excludingWindows: [])
-                let shot = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-                guard enabled, !suspended, (lidHold.amount < 1 || lidHold.resuming), generation == token, foldThreshold.active, let latest = self.angle, latest < trigger + 1.5 else { return }
-                let window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
-                window.isReleasedWhenClosed = false
-                window.level = .screenSaver
-                window.ignoresMouseEvents = true
-                window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-                let view = MetalFoldView(frame: NSRect(origin: .zero, size: screen.frame.size))
-                view.resetAmount = lidHold.amount; view.blurStrength = blurStrength; view.fadeStrength = fadeStrength
-                view.geometry = geometry; view.source = CIImage(cgImage: shot); view.referenceDegrees = trigger; view.progress = progress
-                window.contentView = view
-                overlay = window; canvas = view
-                window.orderFrontRegardless()
-                view.draw()
+                config.width = min(1920, display.width)
+                config.height = max(1, Int((Double(display.height) * Double(config.width) / Double(display.width)).rounded()))
+                config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(min(60, refreshRate)))
+                config.queueDepth = 3
+                config.pixelFormat = kCVPixelFormatType_32BGRA
+                config.showsCursor = false
+                config.capturesAudio = false
+                // Exclude this process, including overlays created after the stream
+                // starts, so the transformed display never feeds back into capture.
+                let ownApps = content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
+                guard !ownApps.isEmpty else {
+                    throw NSError(domain: "Lidscape.Capture", code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Lidscape could not exclude its own windows from capture."])
+                }
+                let filter = SCContentFilter(display: display, excludingApplications: ownApps, exceptingWindows: [])
+                desktopCapture = capture; captureScreenFrame = screen.frame
+                try await capture.start(filter: filter, configuration: config)
+                guard generation == token, enabled, !suspended else { capture.stop(); return }
+                status = canvas == nil ? "Waiting for live desktop frames…" : "Live desktop capture active."
             } catch {
-                enabled = false; hide(); needsScreenPermission = !CGPreflightScreenCaptureAccess(); status = "Screen capture failed: \(error.localizedDescription)"
+                capture.stop()
+                guard generation == token else { return }
+                hide()
+                captureRetryAfter = ProcessInfo.processInfo.systemUptime + 1
+                needsScreenPermission = !CGPreflightScreenCaptureAccess()
+                if needsScreenPermission { enabled = false }
+                status = "Desktop stream failed: \(error.localizedDescription)"
             }
         }
     }

@@ -20,3 +20,6 @@ swiftc -parse-as-library -module-cache-path build/module-cache build/TestSupport
 
 swiftc -parse-as-library -module-cache-path build/module-cache build/TestSupport.swift Tests/LifetimeTests.swift -o build/lifetime-tests
 ./build/lifetime-tests
+
+swiftc -parse-as-library -module-cache-path build/module-cache build/TestSupport.swift Tests/LiveCaptureTests.swift -o build/live-capture-tests
+./build/live-capture-tests

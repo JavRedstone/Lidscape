@@ -97,9 +97,9 @@ Lidscape responds to both **the lid’s angle and whether you are still moving i
 | State | What you see | What happens next |
 | --- | --- | --- |
 | **Normal / ready** | Your normal, live desktop. | Closing below the starting threshold activates the effect. |
-| **Moving / folding** | A desktop snapshot changes perspective with the lid. Blur and darkening grow toward the top. | Stop moving to begin the hold timer, or open past the threshold to return to the live desktop. |
+| **Moving / folding** | Live desktop content changes perspective with the lid. Blur and darkening grow toward the top. | Stop moving to begin the hold timer, or open past the threshold to return to the live desktop. |
 | **Holding still** | The current folded projection remains while the reset delay counts down. Small sensor fluctuations are filtered. | Move again to continue folding, or finish the delay to reset. |
-| **Returning to normal** | Perspective, blur, and fading smoothly ease away while the lid stays at its current angle. | The snapshot overlay disappears and the live desktop resumes. Moving again within the effect range smoothly reactivates the projection. |
+| **Returning to normal** | Perspective, blur, and fading smoothly ease away while the lid stays at its current angle. | The overlay disappears and desktop capture stops. Moving again within the effect range smoothly reactivates the projection. |
 
 ```mermaid
 stateDiagram-v2
@@ -163,9 +163,9 @@ Auto-calibration and hold reset are independent. If calibration is pending durin
 
 ## Limitations and privacy
 
-- The desktop is a frozen snapshot during the fold, not a live video stream. Captures stay in memory and are not saved to disk.
+- The desktop streams live during the fold at up to 60 frames per second, capped at 1920 pixels wide. Capture stops when the overlay is dismissed. Frames stay in memory; no audio is captured and nothing is saved to disk. Lidscape’s own windows are excluded to prevent visual feedback.
 - Hardware sensor availability varies. Without a valid reading, the desktop overlay stays hidden and the preview remains usable.
-- External displays are untouched. The app does not cover the secure login screen or bypass normal lid sleep. Sleep and display reconfiguration dismiss the overlay.
+- External displays are untouched. The app does not cover the secure login screen or bypass normal lid sleep. Sleep and display reconfiguration stop capture and dismiss the overlay. After waking, a fresh stream can resume during reopening; blank or suspended frames hide the overlay. Secure lock-screen capture is not guaranteed.
 - Imported hinges and the active-display-to-hinge offset are approximate. The preview is useful for evaluating the effect, not an exact mechanical simulation.
 - This is an experimental adaptation, not a frame-matched reproduction of the reference transition.
 
