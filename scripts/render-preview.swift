@@ -39,6 +39,11 @@ import SceneKit
             text.draw(at: NSPoint(x: (640 - text.size().width) / 2, y: 14))
             picture.unlockFocus()
             let png = NSBitmapImageRep(data: picture.tiffRepresentation!)!.representation(using: .png, properties: [:])!
+            if frame == 50 {
+                for path in ["docs/images/preview.png", "docs/images/guide/preview.png"] {
+                    try png.write(to: URL(fileURLWithPath: path))
+                }
+            }
             try png.write(to: URL(fileURLWithPath: output).appendingPathComponent(String(format: "%04d.png", frame)))
         }
     }

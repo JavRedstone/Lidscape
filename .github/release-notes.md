@@ -1,13 +1,23 @@
-## What's new in v0.2.0
+## What's new in v0.3.0
 
-- Live desktop capture during folds, enabled by default, with a saved option to use a still image instead.
-- Smoother transitions that wait for the first GPU frame before fading in the overlay.
-- Improved capture restart and cleanup across lid sleep, display sleep, locking, and unlocking.
-- Experimental lock-screen folding, including Apple wallpaper providers and support for other apps' overlays.
-- Lock-screen capture defaults to Everything visible. Choose Selected applications to include specific apps, or System content only for a narrower capture.
-- Saved application selections, a native app chooser, and diagnostics for capture and overlay placement.
+- Redesigned settings with a native macOS sidebar, grouped controls, and focused panes for General, Appearance, Fold Effect, Calibration, Lock Screen, and Activity.
+- Light, Dark, and System appearance choices. System correctly follows macOS after switching from an explicit appearance.
+- An upgraded menu-bar control panel with live lid status, quick controls, and calibration.
+- Colored Enable/Pause controls with native Liquid Glass on macOS 26 and later, stable dimensions, and improved toolbar spacing. Earlier macOS versions use native bordered controls.
+- Activity charts for live lid and starting angles, daily fold counts and time, and the last seven days of folds. Recent history combines calibration changes with enable/pause events and their reasons.
+- Vertical event markers on the live graph, with nearby changes grouped to prevent overlap. Select a group below the graph for exact timestamps.
+- Original abstract blue-and-cyan artwork throughout the app icon, preview, and demonstration, replacing the landscape image.
+- Automatic preview model selection, without manual model/color setup.
 
-Lock-screen folding is opt-in and experimental. Its switch resets when the app quits, and each lock-screen test lasts up to 90 seconds. It uses private macOS display APIs, so behavior may vary across macOS versions. Captures remain in memory; no audio is captured and no recording is saved to disk.
+## Fixes
+
+- Lock-screen folding now saves across launches and no longer switches off after a 90-second test period.
+- Corrected capture selection and overlay Space ordering so included app overlays can fold with the lock screen.
+- Fixed a lock-screen crash caused by invalid AppKit window IDs.
+- Improved capture refresh, lock/unlock detection, full-screen coverage, and readable diagnostics with copyable technical details and last-fold results.
+- Isolated test preferences to prevent checks from overwriting the app's saved settings.
+
+Lock-screen folding uses private macOS display APIs, so behavior can vary across macOS versions. Captures stay in memory; no audio is captured and no recording is saved to disk. Activity history is stored locally, starts with this version, and can be cleared in Activity. Daily totals are retained for 30 days; up to 200 angle changes and 200 enable/pause events are retained. The live angle graph covers the current app session.
 
 ## Installation
 

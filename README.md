@@ -15,7 +15,7 @@ Requires **Apple Silicon · macOS 14 or later**. If macOS blocks the first launc
 *A looping demonstration rendered with the app’s projection, blur, fade, and hold-reset logic.*
 
 <details>
-<summary>Static preview screenshot</summary>
+<summary>Static fold preview</summary>
 
 <img src="docs/images/preview.png" alt="Lidscape preview showing perspective, progressive blur, and fading on a partially folded MacBook" width="760">
 
@@ -41,7 +41,7 @@ Tune the effect and calibration, save your preferences, and optionally run from 
 - **Automatic calibration:** let your screen settle at a comfortable angle to set a new starting position.
 - **Interactive 3D preview:** try the effect with a slider or automatic playback, even without a supported lid sensor.
 - **Adjustable effects:** tune blur, fade, smoothing, viewing distance, and reset timing.
-- **Menu bar and startup controls:** hide the Dock icon, pause from the menu bar, or launch at login.
+- **Menu bar control panel:** see your lid angle and animation status, toggle live capture or lock-screen folding, calibrate, and open Settings. Hide the Dock icon or launch at login.
 
 ## Install and get started
 
@@ -49,9 +49,9 @@ Tune the effect and calibration, save your preferences, and optionally run from 
 2. Drag **Lidscape.app** into **Applications**. Quit any older copy before replacing it.
 3. Open Lidscape. Releases are not Apple-notarized; if macOS blocks the first launch and you trust the download, use **System Settings → Privacy & Security → Open Anyway** after attempting to open it.
 4. Grant **Screen Recording** access when prompted. If needed, enable the Applications copy in **System Settings → Privacy & Security → Screen & System Audio Recording**, then quit and reopen it.
-5. Try the **Preview** tab, or enable **Desktop effect** and slowly move your MacBook’s lid.
+5. Try the **Preview** pane, or enable **Desktop effect** and slowly move your MacBook’s lid.
 
-Lidscape offers **Launch at login** on first launch. You can change startup options in **Settings → App behavior**. It checks Screen Recording access before enabling animation.
+Lidscape offers **Launch at login** on first launch. You can change startup options in **General**. It checks Screen Recording access before enabling animation.
 
 To update, download the latest release and replace the app in Applications. Saved preferences carry over. In-app automatic updates are not included.
 
@@ -63,15 +63,15 @@ For step-by-step instructions with cropped screenshots, see the [Lidscape guide]
 
 ## Try the preview
 
-The **Preview** tab works without Screen Recording permission or a supported lid sensor.
+The **Preview** pane works without Screen Recording permission or a supported lid sensor.
 
-1. Choose a model and color. The app selects a matching model family from your Mac's hardware identifier when supported; **Use my Mac** restores that selection. Color is selected manually.
+1. Open **Preview**. Lidscape automatically selects the model family for your Mac; no model or color setup is required.
 2. Use **Your viewpoint** to see the model from the configured eye position, or **Inspect in 3D** to orbit around it. Use the scroll wheel or a two-finger scroll to zoom in and out. Returning to Your viewpoint restores the camera.
-3. Drag the **Lid** slider. By default, its endpoint is **0° = fully closed**. The model uses the original bundled Lidscape landscape at `Resources/Wallpapers/Lidscape.png`, with the same projection and blur as the desktop effect. A procedural ribbon background is used if the asset is unavailable.
+3. Drag the **Lid** slider. By default, its endpoint is **0° = fully closed**. The model uses Lidscape’s original vector-drawn blue-and-cyan artwork, with the same projection and blur as the desktop effect.
 4. Press the play button beside **Lid** to sweep automatically between open and the full slider endpoint (fully closed, or edge-on in eye-relative mode), pausing at each end for the reset delay plus 0.8 seconds. Press pause or drag manually to stop. Playback stops when leaving the preview.
 5. Release the slider to try **Hold to reset**, enabled by default. After the reset delay, the image smoothly returns to normal while the lid stays in place. Dragging again smoothly restores the folded projection.
 
-With optional local model assets, the available previews are:
+Optional local model assets support these families and asset variants:
 
 | Model | Colors |
 | --- | --- |
@@ -80,7 +80,7 @@ With optional local model assets, the available previews are:
 | MacBook Air 15″ | Sky Blue, Silver, Starlight, Midnight |
 | Simple | Procedural fallback |
 
-Detection maps supported hardware identifiers to these model families; it does not download an exact model for every generation. Unknown identifiers keep the default preview and disable Use my Mac. The selected shell is scaled to the detected display dimensions for projection comparison.
+Detection maps supported hardware identifiers to these model families; it does not download an exact model for every generation. Unknown identifiers use the built-in procedural laptop. The selected shell is scaled to the detected display dimensions for projection comparison.
 
 ## Use the physical lid
 
@@ -134,7 +134,7 @@ The preview demonstrates folding, holding, and returning to normal. Its play but
 
 The laptop icon includes a status dot: **green** when ready or animating, **gray** when paused, and **orange** while checking access, awaiting permission, or missing a sensor. Open the menu for the exact status.
 
-In **Settings → App behavior**, turn off **Show Dock icon** to run Lidscape from the menu bar only. This also removes it from the Command-Tab app switcher. The preference survives relaunch. Use the laptop menu bar icon → **Open Lidscape…** to reopen the window, or **Quit Lidscape** to exit. Turn Show Dock icon back on to restore normal Dock behavior.
+In **General**, turn off **Show Dock icon** to run Lidscape from the menu bar only. This also removes it from the Command-Tab app switcher. The preference survives relaunch. Use the laptop menu bar icon → **Open Lidscape…** to reopen the window, or **Quit Lidscape** to exit. Turn Show Dock icon back on to restore normal Dock behavior.
 
 ## Settings and calibration
 
@@ -143,7 +143,7 @@ For a comfortable working position, set **Distance**, position the lid, look str
 | Setting | Default | Behavior |
 | --- | --- | --- |
 | Live desktop capture | On | Updates content throughout the fold. Turn off to use one still image per fold and stop capture after the first frame. |
-| Lock-screen content | Everything visible | Fold all visible content, choose specific applications, or include system content only with the experimental lock-screen effect. |
+| Lock-screen content | Everything visible | Fold all visible content, choose specific applications, or include system content only with lock-screen folding. |
 | Distance | 55 cm | Horizontal distance from the hinge plane to your eyes. |
 | Manual eye height | 30 cm | Eye height above the hinge; calibration replaces this estimate. |
 | Preview zero | Lid closed | Choose Edge-on to eyes to end the slider where the panel aligns with the eye-to-hinge line. |
@@ -161,13 +161,13 @@ Both manual and automatic calibration require sensor angles between **60° and 1
 
 Auto-calibration and hold reset are independent. If calibration is pending during an active overlay, the image returns to normal before the new calibration is applied, even when Hold to reset is off. The minimum calibration angle does **not** restrict hold reset or the fold effect.
 
-**Reset settings** restores the defaults above, resets the preview and camera, reselects the detected model family, and turns Desktop effect off. It does not revoke macOS permissions. Settings save automatically in macOS preferences and survive quitting. Model, color, viewing position, calibration, smoothing, blur, fade, and hold options are restored. The preview position starts fresh each launch. Enable animation on launch defaults to on; Lidscape checks Screen Recording access before activating. Reset settings also saves the restored defaults.
+**Reset settings** restores the defaults above, resets the preview and camera, reselects the detected model family, and turns Desktop effect off. It does not revoke macOS permissions. Settings save automatically in macOS preferences and survive quitting. Appearance, viewing position, calibration, smoothing, blur, fade, and hold options, lock-screen folding, and capture application selections are restored. The preview model is detected automatically. The preview position starts fresh each launch. Enable animation on launch defaults to on; Lidscape checks Screen Recording access before activating. Reset settings also saves the restored defaults.
 
 ## Limitations and privacy
 
 - With Live desktop capture enabled (the default), the desktop streams during the fold at up to 60 frames per second, capped at 1920 pixels wide. Turn it off to stop capture after the first frame and use that still image for the fold. Frames stay in memory; no audio is captured and nothing is saved to disk. Lidscape’s own windows are excluded to prevent visual feedback.
 - Hardware sensor availability varies. Without a valid reading, the desktop overlay stays hidden and the preview remains usable.
-- External displays are untouched. The app does not cover the secure login screen or bypass normal lid sleep. Sleep and display reconfiguration stop capture and dismiss the overlay. After waking, a fresh stream can resume during reopening; blank or suspended frames hide the overlay. Secure lock-screen capture is not guaranteed.
+- External displays are untouched. Lock-screen folding is optional and does not bypass authentication or normal lid sleep. Sleep and display reconfiguration stop capture and dismiss the overlay. After waking, a fresh stream can resume during reopening; blank or suspended frames hide the overlay. Secure lock-screen capture is not guaranteed.
 - Imported hinges and the active-display-to-hinge offset are approximate. The preview is useful for evaluating the effect, not an exact mechanical simulation.
 - This is an experimental adaptation, not a frame-matched reproduction of the reference transition.
 
@@ -237,7 +237,7 @@ For a local versioned build, run `LIDSCAPE_VERSION=0.1.0 LIDSCAPE_BUILD_NUMBER=1
 
 ### App icon
 
-The official icon is a direct transparent render of the app’s **Simple** laptop model with the actual screen effect. Regenerate it with `./scripts/render-icon.sh`.
+The official icon is a direct transparent render of the app’s **Simple** laptop model with the actual screen effect and an original abstract blue-and-cyan wallpaper. The same vector artwork appears in the preview and demos. Regenerate it with `./scripts/render-icon.sh`.
 
 To use your own icon, place a square **1024 × 1024 PNG** at `Resources/AppIcon/AppIcon.png`, or supply `Resources/AppIcon/AppIcon.icns`. The build prefers the ICNS when both are present; otherwise it converts the PNG into the standard macOS icon sizes. Rebuild and reopen Lidscape to apply it. With no icon supplied, the app uses the default macOS application icon.
 

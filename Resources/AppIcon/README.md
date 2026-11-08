@@ -1,6 +1,6 @@
 # Lidscape app icon
 
-`AppIcon.png` is a direct render of the procedural Simple model and the actual fold effect. Regenerate it with `./scripts/render-icon.sh`; no AI-generated laptop artwork is used.
+`AppIcon.png` is a direct render of the procedural Simple model and the actual fold effect. Regenerate it with `./scripts/render-icon.sh`; it also exports the original abstract blue-and-cyan wallpaper from `PreviewArtwork` in `Sources/Lidscape.swift`. Both the laptop and its screen art are rendered in code.
 
 Put your icon here using either filename:
 

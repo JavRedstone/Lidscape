@@ -7,6 +7,8 @@ import SceneKit
   let prefs=UserDefaults(suiteName:suite)!
   defer { prefs.removePersistentDomain(forName:suite) }
   let model=FoldModel(preferences:prefs)
+  let wallpaper = PreviewArtwork.image()
+  try NSBitmapImageRep(data: wallpaper.tiffRepresentation!)!.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "Resources/Wallpapers/Lidscape.png"))
   let view=MacBookPreview(frame:NSRect(x:0,y:0,width:1024,height:1024))
   view.fadeStrength=0.35
   view.update(progress:0.22,source:model.artwork,reference:90,geometry:model.geometry,sideView:false,blurStrength:1,model:"Simple")
@@ -29,10 +31,11 @@ import SceneKit
   let cropped=NSImage(cgImage:crop,size:NSSize(width:crop.width,height:crop.height))
   let factor=900 / max(cropped.size.width,cropped.size.height)
   let size=NSSize(width:cropped.size.width*factor,height:cropped.size.height*factor)
-  let icon=NSImage(size:NSSize(width:1024,height:1024))
-  icon.lockFocus()
+  let icon=NSBitmapImageRep(bitmapDataPlanes:nil,pixelsWide:1024,pixelsHigh:1024,bitsPerSample:8,samplesPerPixel:4,hasAlpha:true,isPlanar:false,colorSpaceName:.deviceRGB,bytesPerRow:0,bitsPerPixel:0)!
+  NSGraphicsContext.saveGraphicsState()
+  NSGraphicsContext.current=NSGraphicsContext(bitmapImageRep:icon)
   cropped.draw(in:NSRect(x:(1024-size.width)/2,y:(1024-size.height)/2,width:size.width,height:size.height))
-  icon.unlockFocus()
-  try NSBitmapImageRep(data:icon.tiffRepresentation!)!.representation(using:.png,properties:[:])!.write(to:URL(fileURLWithPath:"Resources/AppIcon/AppIcon.png"))
+  NSGraphicsContext.restoreGraphicsState()
+  try icon.representation(using:.png,properties:[:])!.write(to:URL(fileURLWithPath:"Resources/AppIcon/AppIcon.png"))
  }
 }

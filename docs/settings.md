@@ -2,19 +2,21 @@
 
 [Guide home](README.md) · [Troubleshooting](troubleshooting.md)
 
+Choose General, Appearance, Fold Effect, Calibration, Lock Screen, or Activity in the sidebar. Controls use native grouped settings. The toolbar offers Pause or Enable for the desktop effect.
+
 Settings save automatically and survive quitting. To see a slider’s effect without moving your real lid, keep the preview partly folded while adjusting it.
 
-**App behavior → Live desktop capture** defaults to on and keeps content moving during the fold. Turn it off to capture one still image per fold and stop capture after that first frame. This preference saves across launches; Reset settings turns it back on.
+**General → Live desktop capture** defaults to on and keeps content moving during the fold. Turn it off to capture one still image per fold and stop capture after that first frame. This preference saves across launches; Reset settings turns it back on.
 
 ## Lock-screen content
 
-**App behavior → Lock-screen content** saves across launches:
+**Lock Screen → Include** saves across launches:
 
 - **Everything visible** (default): captures the built-in display, including other apps’ overlays and overlays that appear after capture starts. Lidscape’s own windows are excluded to prevent visual feedback.
-- **Selected applications**: includes system content plus the visible windows and overlays of apps you choose. Click **Choose applications…** to select one or more apps, then use the minus button beside an app to remove it. The selection saves across launches. Selected apps must be running when the fold begins; additional windows they create during the fold are included.
+- **Selected applications**: includes system content plus the visible windows and overlays of apps you choose. Click **Choose applications…** to select one or more apps, then use the minus button beside an app to remove it. The selection saves across launches. The visible window list refreshes during the fold, including overlays that appear later.
 - **System content only**: the login-window interface and known Apple wallpaper providers.
 
-This choice applies while **Lock-screen fold (experimental)** is enabled. That experimental switch resets on quit; the content choice and application list are retained. Reset settings returns to Everything visible and clears the application list.
+This choice applies while **Lock-screen fold** is enabled. The switch, content choice, and application list all save across launches; there is no time limit. Reset settings returns to Everything visible and clears the application list.
 
 ## Match your viewing position
 
@@ -66,4 +68,18 @@ The timers are independent. With defaults, the image can return to normal after 
 
 ![Reset settings button](images/guide/reset-settings.png)
 
-Click **Reset settings** to restore effect, calibration, preview, and Dock/startup-animation preferences. The reset is saved immediately and Desktop effect is paused for the current session. It does not revoke Screen Recording permission or unregister Launch at login; manage those separately.
+In **General**, click **Reset settings…** and confirm to restore effect, calibration, preview, and Dock/startup-animation preferences. The reset is saved immediately and Desktop effect is paused for the current session. It does not revoke Screen Recording permission or unregister Launch at login; manage those separately.
+
+## Appearance
+
+Choose **Appearance** in the sidebar, then **Light**, **Dark**, or **System**. System follows your Mac. The choice saves and applies to Lidscape windows, the menu panel, and native dialogs. Dock icon visibility is also in this pane.
+
+## Activity
+
+**Activity** shows live lid and starting angles over the last five minutes, with orange vertical pause markers and green enable markers. Labels appear in a separate event strip below the chart. Changes within 12 seconds share a marker; selecting a group shows every exact timestamp. It also shows today’s fold count and time folding, a seven-day fold chart, and a combined recent-history timeline. The timeline includes successful enables, pauses, and starting-angle changes, with timestamps and reasons. Launch-time enables and pauses caused by lost capture access are identified. Angle changes are labeled as automatic calibration, manual calibration, or manual adjustment. Nearby slider adjustments are combined into one change.
+
+History starts when this version is installed; earlier usage is not reconstructed. Daily totals are saved locally for 30 days and up to 200 angle changes and 200 enable/pause events are retained. The live graph is kept only for the current app session. **Clear activity history…** removes saved totals and history events after confirmation. New activity then records normally.
+
+## Lock-screen status
+
+The Lock Screen pane shows whether the overlay is ready, any capture error, and the last fold’s capture time, wallpaper/app window counts, rendering result, and visibility. **Technical details** holds the WindowServer information. **Copy diagnostics** copies the current status and last-fold results for troubleshooting.

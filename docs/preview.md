@@ -4,15 +4,11 @@
 
 The preview demonstrates the rendering without moving the real lid or granting Screen Recording access.
 
-![Preview window](images/guide/preview.png)
+![Fold preview](images/guide/preview.png)
 
-## Select the laptop
+## Your Mac, automatically
 
-![Model and color controls](images/guide/model-controls.png)
-
-Choose **Simple** for the built-in procedural laptop. Pro 14″ and Air 13″/15″ use optional local Apple model assets; without those assets, their preview falls back to the procedural laptop. Model and color are separate choices. Pro currently offers Space Black; Air offers Sky Blue, Silver, Starlight, and Midnight.
-
-**Use my Mac** selects the supported family corresponding to your hardware identifier. It cannot detect the chassis color. It is disabled for unmapped identifiers.
+The preview uses your detected MacBook family automatically. There is no model or color setup. If a matching model asset is unavailable, the built-in procedural laptop is used.
 
 ## Move the lid and camera
 
@@ -27,13 +23,13 @@ Choose **Inspect in 3D** to orbit by dragging the model. Use the scroll wheel or
 
 ## Play the sequence automatically
 
-Press the play button beside Lid. The preview sweeps to the full endpoint and back, pausing at each end for the reset delay plus 0.8 seconds. Press pause or start dragging manually to stop. Leaving the Preview tab stops playback.
+Press the play button beside Lid. The preview sweeps to the full endpoint and back, pausing at each end for the reset delay plus 0.8 seconds. Press pause or start dragging manually to stop. Leaving the Preview pane stops playback.
 
 [Watch the folding and hold-reset demo](images/preview.gif)
 
 ## Understand the angle label
 
-In **Settings → Viewing position → Preview zero**:
+In **Calibration → Advanced → Preview zero**:
 
 - **Lid closed:** 0° means physically closed.
 - **Edge-on to eyes:** 0° means the panel aligns with the configured eye-to-hinge line. This endpoint can occur before the lid is physically closed.

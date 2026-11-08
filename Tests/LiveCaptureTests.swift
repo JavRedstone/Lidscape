@@ -24,6 +24,17 @@ import ScreenCaptureKit
     }
 
     static func main() {
+        for invalid in [Int.min, -1, 0, Int(UInt32.max) + 1, Int.max] {
+            precondition(LockScreenCapturePolicy.captureWindowID(invalid) == nil,
+                "AppKit sentinel window numbers must not crash capture selection")
+        }
+        precondition(LockScreenCapturePolicy.captureWindowID(1) == 1)
+        precondition(LockScreenCapturePolicy.captureWindowID(Int(UInt32.max)) == UInt32.max)
+        let foreground = LockScreenCapturePolicy.foregroundWindowIDs(ordered: [90, 80, 70, 60, 50], loginWindows: [70, 50])
+        precondition(foreground == [90, 80], "Only windows above the first login surface are visible on the lock screen")
+        precondition(LockScreenCapturePolicy.foregroundWindowIDs(ordered: [70, 80], loginWindows: [70]) == [])
+        precondition(LockScreenCapturePolicy.foregroundWindowIDs(ordered: [80, 60], loginWindows: [70]) == nil,
+            "Missing login ordering must not expose desktop windows")
         let display = CGRect(x: 0, y: 0, width: 1512, height: 982)
         precondition(LockScreenCapturePolicy.accepts(bundleIdentifier: "com.apple.loginwindow",
             onScreen: true, windowFrame: display, displayFrame: display))

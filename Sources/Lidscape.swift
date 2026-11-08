@@ -1,6 +1,7 @@
 import AppKit
 import ServiceManagement
 import SwiftUI
+import Charts
 import SceneKit
 import MetalKit
 import IOKit.hid
@@ -136,7 +137,9 @@ enum LockScreenContent: String, CaseIterable {
     var overlaySpaceLevel: Int32 {
         switch self {
         case .systemOnly: return 400
-        case .selectedApplications, .everything: return .max
+        // WindowServer rejects Int32.max for overlay Spaces on current macOS.
+        // 500 is accepted and sits above lock-screen app overlays (400/401).
+        case .selectedApplications, .everything: return 500
         }
     }
     var title: String {
@@ -156,6 +159,16 @@ enum LockScreenContent: String, CaseIterable {
 }
 
 struct LockScreenCapturePolicy {
+    static func captureWindowID(_ windowNumber: Int) -> CGWindowID? {
+        guard windowNumber > 0 else { return nil }
+        return CGWindowID(exactly: windowNumber)
+    }
+    // WindowServer orders these IDs front-to-back across overlay Spaces. Only
+    // app windows above the login surface are visible lock-screen content.
+    static func foregroundWindowIDs(ordered: [CGWindowID], loginWindows: Set<CGWindowID>) -> Set<CGWindowID>? {
+        guard let boundary = ordered.firstIndex(where: { loginWindows.contains($0) }) else { return nil }
+        return Set(ordered[..<boundary])
+    }
     // System wallpaper providers have their own windows, separate from loginwindow.
     static let backgroundProviders: Set<String> = [
         "com.apple.wallpaper.agent",
@@ -185,13 +198,14 @@ struct LockScreenCapturePolicy {
     }
 }
 
-// Private WindowServer placement, restricted to the opt-in lock-screen test.
+// Private WindowServer placement, used only while lock-screen folding is enabled.
 // A normal window level does not place a window in the lock-screen compositor.
 @MainActor final class LockScreenOverlaySpace {
     static let shared = LockScreenOverlaySpace()
     private typealias Connection = @convention(c) () -> Int32
     private typealias Create = @convention(c) (Int32, Int32, CFDictionary?) -> UInt64
     private typealias SetLevel = @convention(c) (Int32, UInt64, Int32) -> Void
+    private typealias GetLevel = @convention(c) (Int32, UInt64) -> Int32
     private typealias Show = @convention(c) (Int32, CFArray) -> Void
     private typealias Place = @convention(c) (Int32, UInt64, CFArray, Int32) -> Void
     private typealias CopySpaces = @convention(c) (Int32, Int32, CFArray) -> Unmanaged<CFArray>?
@@ -202,6 +216,8 @@ struct LockScreenCapturePolicy {
     private var show: Show?
     private var copySpaces: CopySpaces?
     private var setLevel: SetLevel?
+    private var getLevel: GetLevel?
+    var actualLevel: Int32? { getLevel.map { $0(connection, space) } }
     private(set) var diagnostic = "Overlay Space not initialized."
 
     func attach(_ window: NSWindow, content: LockScreenContent = .systemOnly) -> Bool {
@@ -217,7 +233,8 @@ struct LockScreenCapturePolicy {
         let memberships = copySpaces(connection, 15, [window.windowNumber] as CFArray)?.takeRetainedValue() as? [NSNumber]
         let attached = memberships?.contains { $0.uint64Value == space } == true
         let reported = memberships?.map { String($0.uint64Value) }.joined(separator: ", ") ?? "unavailable"
-        diagnostic = attached ? "Dedicated overlay Space attached; window membership verified." : "Overlay Space \(space) requested for window \(window.windowNumber); reported Spaces: \(reported)."
+        let level = actualLevel.map(String.init) ?? "unknown"
+        diagnostic = attached ? "Dedicated overlay Space attached; window membership verified; Space level \(level) (requested \(content.overlaySpaceLevel))." : "Overlay Space \(space) requested for window \(window.windowNumber); reported Spaces: \(reported)."
         return attached
     }
     private func initialize() -> Bool {
@@ -241,6 +258,9 @@ struct LockScreenCapturePolicy {
         guard created != 0 else { diagnostic = "WindowServer could not create an overlay Space."; return false }
         unsafeBitCast(levelSymbol, to: SetLevel.self)(connection, created, 400)
         setLevel = unsafeBitCast(levelSymbol, to: SetLevel.self)
+        if let symbol = dlsym(library, "SLSSpaceGetAbsoluteLevel") ?? dlsym(library, "CGSSpaceGetAbsoluteLevel") {
+            getLevel = unsafeBitCast(symbol, to: GetLevel.self)
+        }
         show = unsafeBitCast(showSymbol, to: Show.self)
         place = unsafeBitCast(placeSymbol, to: Place.self)
         copySpaces = unsafeBitCast(copySymbol, to: CopySpaces.self)
@@ -266,6 +286,10 @@ final class DesktopCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         try await stream.startCapture()
         // A lid/session change can stop us while startCapture is suspended.
         if isStopped { try? await stream.stopCapture() }
+    }
+    @MainActor func updateFilter(_ filter: SCContentFilter) async throws {
+        guard !isStopped, let stream else { return }
+        try await stream.updateContentFilter(filter)
     }
     private var isStopped: Bool {
         lock.lock(); defer { lock.unlock() }
@@ -531,6 +555,9 @@ final class FoldGPU {
 final class FoldOverlayPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        frameRect // The lock-screen overlay must cover the menu-bar/notch region too.
+    }
 }
 
 final class MetalFoldView: MTKView, MTKViewDelegate {
@@ -939,9 +966,220 @@ struct MacHardware {
     }
 }
 
+enum AppAppearance: String, CaseIterable, Identifiable {
+    case light, dark, system
+    var id: Self { self }
+    var title: String { rawValue.capitalized }
+    var colorScheme: ColorScheme? {
+        switch self { case .system: return nil; case .light: return .light; case .dark: return .dark }
+    }
+}
+
+struct AngleSample: Identifiable {
+    let id = UUID()
+    let date: Date
+    let angle: Double
+    let reference: Double
+}
+struct ReferenceChange: Codable, Identifiable {
+    var id = UUID()
+    let date: Date
+    let previous: Double
+    let angle: Double
+    let reason: String
+}
+struct EffectStateEvent: Codable, Identifiable {
+    var id = UUID()
+    let date: Date
+    let enabled: Bool
+    let source: String
+}
+struct EffectEventCluster: Identifiable {
+    var events: [EffectStateEvent]
+    var id: UUID { events[0].id }
+    var date: Date { events[0].date }
+    var enabled: Bool { events.last!.enabled }
+    static func group(_ events: [EffectStateEvent], separation: TimeInterval = 12) -> [Self] {
+        var clusters: [Self] = []
+        for event in events.sorted(by: { $0.date < $1.date }) {
+            if let last = clusters.last, event.date.timeIntervalSince(last.date) < separation {
+                clusters[clusters.count - 1].events.append(event)
+            } else {
+                clusters.append(Self(events: [event]))
+            }
+        }
+        return clusters
+    }
+}
+struct ActivityTimelineEntry: Identifiable {
+    let id: UUID
+    let date: Date
+    let title: String
+    let detail: String
+    let symbol: String
+    let color: Color
+}
+struct DailyActivity: Codable, Identifiable {
+    var id: Date { date }
+    let date: Date
+    var folds = 0
+    var seconds = 0.0
+}
+struct ActivityHistory: Codable {
+    var days: [DailyActivity] = []
+    var changes: [ReferenceChange] = []
+    var stateEvents: [EffectStateEvent] = []
+    private enum CodingKeys: String, CodingKey { case days, changes, stateEvents }
+    init() {}
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        days = try values.decodeIfPresent([DailyActivity].self, forKey: .days) ?? []
+        changes = try values.decodeIfPresent([ReferenceChange].self, forKey: .changes) ?? []
+        stateEvents = Array((try values.decodeIfPresent([EffectStateEvent].self, forKey: .stateEvents) ?? []).suffix(200))
+    }
+    mutating func recordState(enabled: Bool, source: String, date: Date = Date()) {
+        stateEvents.append(EffectStateEvent(date: date, enabled: enabled, source: source))
+        stateEvents = Array(stateEvents.suffix(200))
+    }
+    mutating func record(date: Date, folds: Int = 0, seconds: Double = 0) {
+        let day = Calendar.current.startOfDay(for: date)
+        if !days.contains(where: { $0.date == day }) { days.append(DailyActivity(date: day)) }
+        if let index = days.firstIndex(where: { $0.date == day }) {
+            days[index].folds += max(0, folds)
+            days[index].seconds += seconds.isFinite ? max(0, seconds) : 0
+        }
+        let cutoff = Calendar.current.date(byAdding: .day, value: -29, to: day)!
+        days = Array(days.filter { $0.date >= cutoff && $0.date <= day }.sorted { $0.date < $1.date }.suffix(30))
+    }
+    mutating func change(from previous: Double, to angle: Double, reason: String, date: Date = Date()) {
+        guard previous.isFinite, angle.isFinite, abs(previous - angle) >= 0.5 else { return }
+        if let last = changes.last, reason == "Adjusted manually", last.reason == reason,
+           (0...2).contains(date.timeIntervalSince(last.date)) {
+            changes[changes.count - 1] = ReferenceChange(id: last.id, date: date, previous: last.previous, angle: angle, reason: reason)
+        } else {
+            changes.append(ReferenceChange(date: date, previous: previous, angle: angle, reason: reason))
+        }
+        changes = Array(changes.suffix(200))
+    }
+}
+struct LockCaptureSnapshot {
+    let date: Date
+    let wallpaperWindows: Int
+    let appWindows: Int
+    let rendered: Bool
+    let visible: Bool
+    let level: Int32?
+    let requestedLevel: Int32
+}
+
+enum PreviewArtwork {
+    static func image(size: NSSize = NSSize(width: 1600, height: 1000)) -> NSImage {
+        NSImage(size: size, flipped: false) { rect in
+            func color(_ hex: UInt32) -> NSColor {
+                NSColor(srgbRed: CGFloat((hex >> 16) & 255) / 255,
+                        green: CGFloat((hex >> 8) & 255) / 255,
+                        blue: CGFloat(hex & 255) / 255, alpha: 1)
+            }
+            NSGradient(colors: [color(0x061421), color(0x16394A)])!.draw(in: rect, angle: 25)
+            // Broad folded planes, drawn as vectors so the preview has no
+            // generated scenery or external image dependency.
+            let transform = NSAffineTransform()
+            transform.scaleX(by: rect.width / 1600, yBy: rect.height / 1000)
+            transform.concat()
+            let planes: [(CGFloat, UInt32, UInt32)] = [
+                (360, 0x123D6A, 0x285F93),
+                (180, 0x166EB1, 0x6ACDF0),
+                (0, 0x6CD7E8, 0xE7FAF7),
+                (-180, 0x096C88, 0x51C7D4),
+                (-360, 0x09283F, 0x21638A)
+            ]
+            for (offset, low, high) in planes {
+                let plane = NSBezierPath()
+                plane.move(to: NSPoint(x: -400, y: -200 + offset))
+                plane.curve(to: NSPoint(x: 1800, y: 940 + offset),
+                            controlPoint1: NSPoint(x: 600, y: -240 + offset),
+                            controlPoint2: NSPoint(x: 620, y: 1080 + offset))
+                plane.line(to: NSPoint(x: 1800, y: 1150 + offset))
+                plane.curve(to: NSPoint(x: -400, y: 10 + offset),
+                            controlPoint1: NSPoint(x: 620, y: 1290 + offset),
+                            controlPoint2: NSPoint(x: 600, y: -30 + offset))
+                plane.close()
+                NSGradient(colors: [color(low), color(high)])!.draw(in: plane, angle: 70)
+            }
+            return true
+        }
+    }
+}
+
 @MainActor final class FoldModel: NSObject, ObservableObject {
     private let preferences: UserDefaults
     private var settingsReady = false
+    @Published var appearance = AppAppearance.system {
+        didSet { saveSettings(); if settingsReady { applyAppearance() } }
+    }
+    private func applyAppearance() {
+        guard Bundle.main.bundleIdentifier == "local.macfold.app" else { return }
+        switch appearance {
+        case .system: NSApp.appearance = nil
+        case .light: NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
+    }
+    @Published private(set) var activity = ActivityHistory()
+    @Published private(set) var angleSamples: [AngleSample] = []
+    @Published private(set) var lastLockCapture: LockCaptureSnapshot?
+    @Published private(set) var lockCaptureProblem: String?
+    private var nextActivitySample = 0.0
+    private var nextActivitySave = 0.0
+    private var lastActivityTick = 0.0
+    private var pendingFoldSeconds = 0.0
+    private var activityWasFolding = false
+    private var referenceChangeReason = "Adjusted manually"
+    private var nextDiagnosticSnapshot = 0.0
+    var todayActivity: DailyActivity {
+        activity.days.first { Calendar.current.isDateInToday($0.date) } ?? DailyActivity(date: Calendar.current.startOfDay(for: Date()))
+    }
+    var overlayPlacementReady: Bool { lockScreenEffect && lockSpaceReady && preparedLockPanel != nil }
+    var overlaySpaceLevel: Int32? { LockScreenOverlaySpace.shared.actualLevel }
+    var lockReadinessTitle: String {
+        if !lockScreenEffect { return "Lock-screen fold is off" }
+        if lockCaptureProblem != nil { return "Last capture needs attention" }
+        if !lockSpaceReady { return "Overlay is not ready" }
+        return screenLocked ? "Ready on the lock screen" : "Ready for your next lock"
+    }
+    var lockReadinessDetail: String {
+        if !lockScreenEffect { return "Enable it above to fold the lock screen with your lid." }
+        if let lockCaptureProblem { return lockCaptureProblem }
+        if !lockSpaceReady { return "The fold could not prepare its lock-screen overlay. Expand technical details for the reported reason." }
+        return "Lock your Mac and move the lid below your starting angle. The fold appears while the lid is moving."
+    }
+    func copyLockDiagnostics() {
+        let snapshot = lastLockCapture.map { "Last fold: \($0.date)\nWallpaper windows: \($0.wallpaperWindows)\nApp windows: \($0.appWindows)\nRendered: \($0.rendered)\nVisible: \($0.visible)" } ?? "No fold captured this launch."
+        let text = "Lidscape \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development")\n\(lockReadinessTitle)\n\(lockReadinessDetail)\n\(snapshot)\n\(lockScreenStatus)"
+        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+    }
+    func clearActivity() {
+        activity = ActivityHistory(); angleSamples = []; pendingFoldSeconds = 0
+        persistActivity()
+    }
+    private func persistActivity() {
+        if let data = try? JSONEncoder().encode(activity) { preferences.set(data, forKey: "Lidscape.activity.v1") }
+    }
+    private func recordActivity(now: Double) {
+        let folding = enabled && !suspended && canvas?.hasRenderedFrame == true && (overlay?.alphaValue ?? 0) > 0.5
+        let elapsed = now - lastActivityTick; lastActivityTick = now
+        if folding && activityWasFolding && elapsed >= 0 && elapsed < 0.25 { pendingFoldSeconds += elapsed }
+        if folding && !activityWasFolding { activity.record(date: Date(), folds: 1) }
+        activityWasFolding = folding
+        guard now >= nextActivitySample else { return }
+        nextActivitySample = now + 1
+        let date = Date()
+        if activity.days.last?.date != Calendar.current.startOfDay(for: date) { activity.record(date: date) }
+        if pendingFoldSeconds > 0 { activity.record(date: date, seconds: pendingFoldSeconds); pendingFoldSeconds = 0 }
+        if let angle { angleSamples.append(AngleSample(date: date, angle: angle, reference: trigger)) }
+        angleSamples = Array(angleSamples.filter { $0.date >= date.addingTimeInterval(-300) }.suffix(301))
+        if now >= nextActivitySave { nextActivitySave = now + 10; persistActivity() }
+    }
     @Published var enableAtLaunch = true { didSet { saveSettings() } }
     @Published var launchAtLogin = false
     @Published var loginNeedsApproval = false
@@ -978,6 +1216,7 @@ struct MacHardware {
     private func startApplication() {
         guard Bundle.main.bundleIdentifier == "local.macfold.app" else { return }
         refreshLoginStatus()
+        applyAppearance()
         if !preferences.bool(forKey: "Lidscape.setupComplete") {
             let alert = NSAlert()
             alert.messageText = "Welcome to Lidscape"
@@ -989,7 +1228,14 @@ struct MacHardware {
             preferences.set(true, forKey: "Lidscape.setupComplete")
             if response == .alertFirstButtonReturn { setLaunchAtLogin(true) }
         }
-        if enableAtLaunch { setEnabled(true) }
+        refreshScreenLockState()
+        if lockScreenEffect { prepareLockPanel(); updateLockTickTimer() }
+        let watchdog = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshScreenLockState() }
+        }
+        RunLoop.main.add(watchdog, forMode: .common)
+        lockStateWatchdog = watchdog
+        if enableAtLaunch { setEnabled(true, source: "At app launch") }
     }
     @Published var showDockIcon = true {
         didSet {
@@ -1005,10 +1251,11 @@ struct MacHardware {
     private func saveSettings() {
         guard settingsReady else { return }
         preferences.set([
-            "enableAtLaunch": enableAtLaunch, "model": previewModel, "color": previewColor, "showDockIcon": showDockIcon,
+            "appearance": appearance.rawValue, "enableAtLaunch": enableAtLaunch, "showDockIcon": showDockIcon,
             "liveCapture": liveDesktopCapture,
             "lockScreenContent": lockScreenContent.rawValue,
             "lockScreenApplications": selectedLockApplications,
+            "lockScreenEffect": lockScreenEffect,
             "distance": geometry.distance, "eyeHeight": geometry.eyeHeight,
             "trigger": trigger, "smoothing": smoothing, "blur": blurStrength, "fade": fadeStrength,
             "hold": holdToReset, "holdDelay": holdDelay,
@@ -1022,8 +1269,7 @@ struct MacHardware {
             guard let value = values[key] as? Double, value.isFinite else { return fallback }
             return min(range.upperBound, max(range.lowerBound, value))
         }
-        if let model = values["model"] as? String, ["MacBookPro14", "MacBookAir13", "MacBookAir15", "Simple"].contains(model) { previewModel = model }
-        if let color = values["color"] as? String, availableColors.contains(color) { previewColor = color }
+        appearance = (values["appearance"] as? String).flatMap(AppAppearance.init(rawValue:)) ?? .system
         geometry.distance = number("distance", 550, 300...1000)
         geometry.eyeHeight = number("eyeHeight", 300, -600...3000)
         trigger = number("trigger", 90, 35...150)
@@ -1049,13 +1295,18 @@ struct MacHardware {
         } else {
             lockScreenContent = storedContent.flatMap(LockScreenContent.init(rawValue:)) ?? .everything
         }
+        lockScreenEffect = values["lockScreenEffect"] as? Bool ?? false
     }
     let hardwareIdentifier = MacHardware.identifier
     func useDetectedModel() {
-        if let match = MacHardware.previewModel(for: hardwareIdentifier) { previewModel = match }
+        previewModel = MacHardware.previewModel(for: hardwareIdentifier) ?? "Simple"
+        previewColor = availableColors[0]
     }
     func resetSettings() {
-        setEnabled(false)
+        referenceChangeReason = "Reset to defaults"
+        defer { referenceChangeReason = "Adjusted manually" }
+        setEnabled(false, source: "Settings reset")
+        appearance = .system
         lockScreenEffect = false
         liveDesktopCapture = true
         lockScreenContent = .everything
@@ -1068,7 +1319,7 @@ struct MacHardware {
         eyeRelativePreview = false; preview = 0; previewEditing = false; previewPlaying = false
         previewHold = HoldResetState(); lidHold = HoldResetState(); previewReset = 0
         calibrationAngleGate = ResetAngleGate(); foldThreshold = FoldThreshold()
-        previewModel = MacHardware.previewModel(for: hardwareIdentifier) ?? "MacBookPro14"
+        previewModel = MacHardware.previewModel(for: hardwareIdentifier) ?? "Simple"
         previewColor = availableColors[0]
         status = "Settings restored to defaults."
     }
@@ -1116,22 +1367,23 @@ struct MacHardware {
             lidHold = HoldResetState(); foldThreshold = FoldThreshold()
         }
     }
-    // Session-only: each launch requires opting into the prototype.
     @Published var lockScreenEffect = false {
         didSet {
-            lockTickTimer?.invalidate(); lockTickTimer = nil
+            saveSettings()
+            guard settingsReady else { return }
             hide()
             if lockScreenEffect { prepareLockPanel() }
             else { preparedLockPanel?.close(); preparedLockPanel = nil }
+            updateLockTickTimer()
             lidHold = HoldResetState(); foldThreshold = FoldThreshold()
-            lockScreenStatus = lockScreenEffect ? lockSpaceDiagnostic : "Lock-screen experiment off."
+            lockScreenStatus = lockScreenEffect ? lockSpaceDiagnostic : "Lock-screen fold off."
         }
     }
-    @Published var lockScreenStatus = "Lock-screen experiment off."
+    @Published var lockScreenStatus = "Lock-screen fold off."
     private var screenLocked = false
     private var lockObservers: [NSObjectProtocol] = []
     private var lockTickTimer: Timer?
-    private var lockTestDeadline = 0.0
+    private var lockStateWatchdog: Timer?
     private var preparedLockPanel: FoldOverlayPanel?
     private var lockSpaceReady = false
     private var lockSpaceDiagnostic = "Overlay Space not prepared."
@@ -1180,7 +1432,14 @@ struct MacHardware {
     @Published var blurStrength = 1.0 { didSet { saveSettings() } }
     private var previewHold = HoldResetState()
     private var lidHold = HoldResetState()
-    @Published var trigger = 90.0 { didSet { saveSettings() } }
+    @Published var trigger = 90.0 {
+        didSet {
+            saveSettings()
+            guard settingsReady else { return }
+            activity.change(from: oldValue, to: trigger, reason: referenceChangeReason)
+            persistActivity()
+        }
+    }
     @Published var geometry = ViewingGeometry() { didSet { saveSettings() } }
     @Published var displaySizeDescription = "Fallback display size"
     private func refreshDisplaySize() {
@@ -1217,6 +1476,11 @@ struct MacHardware {
     private var lockOverlayLevel = Int(CGShieldingWindowLevel()) + 1
     private var lockBackgroundWindowCount = 0
     private var lockAdditionalWindowCount = 0
+    private var lockCaptureWindowIDs: Set<CGWindowID> = []
+    private var lockCaptureDisplayID: CGDirectDisplayID?
+    private var nextLockFilterRefresh = 0.0
+    private var lockFilterRefreshing = false
+    private var nextLockOrderRefresh = 0.0
     private var overlayReveal = SmoothValue()
     private var capturing = false
     private var generation = 0
@@ -1226,51 +1490,17 @@ struct MacHardware {
     private var suspended: Bool { resumeGate.suspended }
     init(preferences: UserDefaults = .standard) {
         self.preferences = preferences
-        // Bundle original artwork so the preview and app identity share a wallpaper.
-        let wallpaperURL = Bundle.main.url(forResource: "Lidscape", withExtension: "png", subdirectory: "Wallpapers")
-            ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Resources/Wallpapers/Lidscape.png")
-        let wallpaper = NSImage(contentsOf: wallpaperURL)
-        let image = NSImage(size: NSSize(width: 1200, height: 750), flipped: false) { rect in
-            if let wallpaper, wallpaper.size.width > 0, wallpaper.size.height > 0 {
-                let scale = max(rect.width / wallpaper.size.width, rect.height / wallpaper.size.height)
-                let size = NSSize(width: wallpaper.size.width * scale, height: wallpaper.size.height * scale)
-                wallpaper.draw(in: NSRect(x: (rect.width - size.width) / 2, y: (rect.height - size.height) / 2,
-                                          width: size.width, height: size.height))
-                return true
-            }
-            // Original flowing-ribbon fallback for video/dynamic wallpapers.
-            func color(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> NSColor {
-                NSColor(srgbRed: r, green: g, blue: b, alpha: 1)
-            }
-            NSGradient(colors: [color(0.025, 0.035, 0.16), color(0.12, 0.10, 0.38), color(0.32, 0.20, 0.58)])!.draw(in: rect, angle: 65)
-            for i in 0..<5 {
-                let offset = CGFloat(i) * 125
-                let ribbon = NSBezierPath()
-                ribbon.move(to: NSPoint(x: -150, y: -200 + offset))
-                ribbon.curve(to: NSPoint(x: 1350, y: 280 + offset),
-                             controlPoint1: NSPoint(x: 380, y: 850 + offset),
-                             controlPoint2: NSPoint(x: 720, y: -450 + offset))
-                ribbon.line(to: NSPoint(x: 1350, y: 440 + offset))
-                ribbon.curve(to: NSPoint(x: -150, y: -40 + offset),
-                             controlPoint1: NSPoint(x: 720, y: -290 + offset),
-                             controlPoint2: NSPoint(x: 380, y: 1010 + offset))
-                ribbon.close()
-                let palettes: [[NSColor]] = [
-                    [color(0.12, 0.30, 0.85), color(0.35, 0.82, 0.96)],
-                    [color(0.20, 0.15, 0.63), color(0.64, 0.55, 0.98)],
-                    [color(0.38, 0.18, 0.69), color(0.96, 0.53, 0.74)],
-                    [color(0.35, 0.21, 0.73), color(0.66, 0.71, 1.0)],
-                    [color(0.13, 0.18, 0.50), color(0.33, 0.57, 0.89)]
-                ]
-                NSGradient(colors: palettes[i])!.draw(in: ribbon, angle: 85)
-            }
-            return true
-        }
-        artwork = CIImage(data: image.tiffRepresentation!)!
+        artwork = CIImage(data: PreviewArtwork.image().tiffRepresentation!)!
         super.init()
         refreshDisplaySize()
-        useDetectedModel()
         restoreSettings()
+        useDetectedModel()
+        if let data = preferences.data(forKey: "Lidscape.activity.v1"),
+           let stored = try? JSONDecoder().decode(ActivityHistory.self, from: data) {
+            activity = stored
+            activity.record(date: Date())
+            activity.changes = Array(activity.changes.suffix(200))
+        }
         settingsReady = true
         preferences.set(true, forKey: "Lidscape.calibrationDelayV2")
         saveSettings()
@@ -1295,6 +1525,9 @@ struct MacHardware {
                 self?.refreshLoginStatus()
             }
         }
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.persistActivity() }
+        }
         let center = NSWorkspace.shared.notificationCenter
         let lifecycleNotifications: [(Notification.Name, FoldResumeGate.Reason, Bool)] = [
             (NSWorkspace.willSleepNotification, .systemSleep, true),
@@ -1312,8 +1545,8 @@ struct MacHardware {
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.hide(); self?.refreshDisplaySize() }
         }
-        // These notifications are not a documented lock-state API. The
-        // experiment starts off each launch; only a new lock event arms it.
+        // Notifications provide immediate transitions; session polling below
+        // repairs missed events without turning the user's saved setting off.
         for (name, locked) in [("com.apple.screenIsLocked", true), ("com.apple.screenIsUnlocked", false)] {
             let observer = DistributedNotificationCenter.default().addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.handleScreenLock(locked) }
@@ -1321,25 +1554,34 @@ struct MacHardware {
             lockObservers.append(observer)
         }
     }
+    private func refreshScreenLockState() {
+        guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return }
+        let locked = session["CGSSessionScreenIsLocked"] as? Bool ?? false
+        guard locked != screenLocked else { return }
+        handleScreenLock(locked)
+    }
+    private func updateLockTickTimer() {
+        lockTickTimer?.invalidate(); lockTickTimer = nil
+        guard screenLocked && lockScreenEffect else { return }
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        lockTickTimer = timer
+    }
     private func handleScreenLock(_ locked: Bool) {
         screenLocked = locked
-        lockTickTimer?.invalidate(); lockTickTimer = nil
         hide()
         sampler.restart()
         foldThreshold = FoldThreshold(); lidHold = HoldResetState()
         pendingCalibration = nil; settledCalibration = SettledCalibration()
         captureRetryAfter = 0
         if locked && lockScreenEffect {
+            prepareLockPanel()
             preparedLockPanel?.level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()))
-            lockTestDeadline = ProcessInfo.processInfo.systemUptime + 90
             lockScreenStatus = "Locked. Waiting for the lid to enter the effect range."
-            // A screen display link may pause when its user's windows are hidden.
-            let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.tick() }
-            }
-            RunLoop.main.add(timer, forMode: .common)
-            lockTickTimer = timer
         }
+        updateLockTickTimer()
     }
     private func handleLifecycle(_ reason: FoldResumeGate.Reason, suspending: Bool) {
         if suspending { resumeGate.suspend(reason) }
@@ -1355,9 +1597,11 @@ struct MacHardware {
         guard let current = sampler.latest(), (60...150).contains(current) else {
             status = "Calibration needs a sensor reading with the lid between 60° and 150°."; return
         }
-        applyCalibration(current)
+        applyCalibration(current, automatic: false)
     }
-    private func applyCalibration(_ current: Double) {
+    private func applyCalibration(_ current: Double, automatic: Bool = true) {
+        referenceChangeReason = automatic ? "Auto-calibrated" : "Calibrated by you"
+        defer { referenceChangeReason = "Adjusted manually" }
         geometry.calibrate(lidDegrees: current)
         trigger = current
         preview = 0
@@ -1370,10 +1614,17 @@ struct MacHardware {
     func openScreenRecordingSettings() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
     }
-    func setEnabled(_ value: Bool) {
+    private func setEffectState(_ value: Bool, source: String) {
+        guard enabled != value else { return }
+        enabled = value
+        activity.recordState(enabled: value, source: source)
+        persistActivity()
+    }
+    func setEnabled(_ value: Bool, source: String = "Manual control") {
+        guard !value || !enabled else { return }
         enableRequest += 1
         let request = enableRequest
-        enabled = false
+        setEffectState(false, source: source)
         checkingCapture = false
         foldThreshold = FoldThreshold()
         lidHold = HoldResetState()
@@ -1391,7 +1642,7 @@ struct MacHardware {
                 guard content.displays.contains(where: { CGDisplayIsBuiltin($0.displayID) != 0 }) else {
                     status = "No built-in MacBook display found."; return
                 }
-                enabled = true
+                setEffectState(true, source: source)
                 status = angle == nil ? "Desktop capture ready, but no lid sensor reading is available." : "Ready. Close the physical lid below \(Int(trigger - 1.5))° to start the effect."
             } catch {
                 guard request == enableRequest else { return }
@@ -1405,8 +1656,76 @@ struct MacHardware {
             }
         }
     }
+    private func selectLockScreenWindows(content: SCShareableContent, display: SCDisplay) throws -> [SCWindow] {
+        // AppKit can return positive sentinel values above UInt32.max for
+        // status-bar windows while locking. Read once and reject invalid IDs.
+        let ownIDs = Set(NSApp.windows.compactMap { LockScreenCapturePolicy.captureWindowID($0.windowNumber) })
+        let systemWindows = content.windows.filter {
+            !ownIDs.contains($0.windowID) && LockScreenCapturePolicy.accepts(
+                bundleIdentifier: $0.owningApplication?.bundleIdentifier, onScreen: $0.isOnScreen,
+                windowFrame: $0.frame, displayFrame: display.frame)
+        }
+        let loginIDs = Set(systemWindows.filter { $0.owningApplication?.bundleIdentifier == "com.apple.loginwindow" }.map(\.windowID))
+        guard !loginIDs.isEmpty else {
+            throw NSError(domain: "Lidscape.Capture", code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "macOS is not exposing the lock-screen surface."])
+        }
+        var windows = systemWindows
+        if lockScreenContent != .systemOnly {
+            let info = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]]
+            let ordered = info?.compactMap { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value } ?? []
+            guard let foreground = LockScreenCapturePolicy.foregroundWindowIDs(ordered: ordered, loginWindows: loginIDs) else {
+                throw NSError(domain: "Lidscape.Capture", code: 4,
+                    userInfo: [NSLocalizedDescriptionKey: "Cannot verify which app windows are above the lock screen."])
+            }
+            let systemIDs = Set(systemWindows.map(\.windowID))
+            let selectedIDs = Set(selectedLockApplications.keys)
+            windows += content.windows.filter {
+                !systemIDs.contains($0.windowID) && !ownIDs.contains($0.windowID)
+                    && $0.owningApplication?.processID != ProcessInfo.processInfo.processIdentifier
+                    && foreground.contains($0.windowID)
+                    && LockScreenCapturePolicy.accepts(bundleIdentifier: $0.owningApplication?.bundleIdentifier,
+                        // WindowServer's visible ordering includes private Spaces;
+                        // SCWindow.isOnScreen may only reflect an app's normal Space.
+                        onScreen: true, windowFrame: $0.frame, displayFrame: display.frame,
+                        content: lockScreenContent, selectedApplications: selectedIDs)
+            }
+        }
+        lockBackgroundWindowCount = windows.filter { LockScreenCapturePolicy.isBackgroundProvider($0.owningApplication?.bundleIdentifier) }.count
+        lockAdditionalWindowCount = windows.count - systemWindows.count
+        return windows
+    }
+    private func refreshLockCaptureWindows(now: Double) {
+        guard captureIsLockScreen, liveDesktopCapture, !lockFilterRefreshing,
+              now >= nextLockFilterRefresh, let capture = desktopCapture,
+              let displayID = lockCaptureDisplayID else { return }
+        nextLockFilterRefresh = now + 0.75
+        lockFilterRefreshing = true
+        let token = generation
+        Task { [weak self, weak capture] in
+            guard let self, let capture else { return }
+            defer { lockFilterRefreshing = false }
+            do {
+                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+                guard generation == token, screenLocked,
+                      let display = content.displays.first(where: { $0.displayID == displayID }) else { return }
+                let windows = try selectLockScreenWindows(content: content, display: display)
+                let ids = Set(windows.map(\.windowID))
+                guard ids != lockCaptureWindowIDs else { return }
+                try await capture.updateFilter(SCContentFilter(display: display, including: windows))
+                guard generation == token else { return }
+                lockCaptureWindowIDs = ids
+            } catch {
+                guard generation == token else { return }
+                hide()
+                captureRetryAfter = ProcessInfo.processInfo.systemUptime + 1
+                lockCaptureProblem = error.localizedDescription
+                lockScreenStatus = "Lock-screen capture interrupted: \(error.localizedDescription)"
+            }
+        }
+    }
     private func prepareLockPanel() {
-        guard !screenLocked, preparedLockPanel == nil,
+        guard preparedLockPanel == nil,
               let screen = NSScreen.screens.first(where: {
                   guard let id = ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value else { return false }
                   return CGDisplayIsBuiltin(id) != 0
@@ -1426,6 +1745,7 @@ struct MacHardware {
         panel.orderFrontRegardless()
         lockSpaceReady = LockScreenOverlaySpace.shared.attach(panel, content: lockScreenContent)
         lockSpaceDiagnostic = LockScreenOverlaySpace.shared.diagnostic
+        if !screenLocked { lockScreenStatus = lockSpaceDiagnostic }
     }
     private func dismissOverlay() {
         canvas?.stopRendering()
@@ -1447,6 +1767,8 @@ struct MacHardware {
         generation += 1
         desktopCapture?.stop(); desktopCapture = nil; captureScreenFrame = nil; captureIsLockScreen = false
         dismissOverlay()
+        lockCaptureWindowIDs = []; lockCaptureDisplayID = nil
+        nextLockFilterRefresh = 0; nextLockOrderRefresh = 0
         progress = 0; lidSmoothing = SmoothValue()
     }
     private func makeOverlay(frame: NSRect) -> Bool {
@@ -1491,18 +1813,14 @@ struct MacHardware {
     deinit {
         displayLink?.invalidate(); desktopCapture?.stop()
         lockTickTimer?.invalidate()
+        lockStateWatchdog?.invalidate()
         let panel = preparedLockPanel
         DispatchQueue.main.async { panel?.close() }
         for observer in lockObservers { DistributedNotificationCenter.default().removeObserver(observer) }
     }
     private func tick() {
-        defer { refreshMenuStatus() }
         let now = ProcessInfo.processInfo.systemUptime
-        if screenLocked && lockScreenEffect && now >= lockTestDeadline {
-            lockScreenEffect = false
-            lockScreenStatus = "Lock-screen test ended after 90 seconds. Enable it again for another test."
-            return
-        }
+        defer { refreshMenuStatus(); recordActivity(now: now) }
         let dt = min(0.1, now - lastTick); lastTick = now
         if previewPlaying {
             let playback = previewPlayback.advance(dt: dt, holdDelay: holdDelay)
@@ -1540,13 +1858,14 @@ struct MacHardware {
             if overlay != nil || desktopCapture != nil || capturing { hide() }
             return
         }
+        refreshLockCaptureWindows(now: now)
         let frame = desktopCapture?.latest()
         if let error = frame?.error {
-            if captureIsLockScreen { lockScreenStatus = "Lock-screen stream interrupted: \(error.localizedDescription)" }
+            if captureIsLockScreen { lockCaptureProblem = error.localizedDescription; lockScreenStatus = "Lock-screen stream interrupted: \(error.localizedDescription)" }
             hide()
             captureRetryAfter = now + 1
             needsScreenPermission = !CGPreflightScreenCaptureAccess()
-            if needsScreenPermission { enabled = false }
+            if needsScreenPermission { setEffectState(false, source: "Screen Recording access lost") }
             status = "Desktop stream interrupted: \(error.localizedDescription)"
             return
         }
@@ -1564,7 +1883,7 @@ struct MacHardware {
             if canvas == nil {
                 guard makeOverlay(frame: screenFrame) else { return }
                 status = "Live desktop capture active."
-                if captureIsLockScreen { lockScreenStatus = "Receiving login-window frames. Check whether the fold is visible while locked." }
+                if captureIsLockScreen { lockScreenStatus = "Lock-screen capture active." }
             }
             if let canvas {
                 canvas.source = image
@@ -1577,11 +1896,27 @@ struct MacHardware {
                     overlay?.alphaValue = alpha > 0.995 ? 1 : max(0.001, alpha)
                 }
                 if captureIsLockScreen, let overlay {
+                    // Other overlay apps can reassert their own top-level Space.
+                    // Reassert ours while the fold is visible, never their windows.
+                    if canvas.hasRenderedFrame && now >= nextLockOrderRefresh {
+                        nextLockOrderRefresh = now + 0.25
+                        _ = LockScreenOverlaySpace.shared.attach(overlay, content: lockScreenContent)
+                        overlay.orderFrontRegardless()
+                    }
                     let render = canvas.hasRenderedFrame ? "GPU ready" : "waiting for GPU/drawable"
                     let space = overlay.isOnActiveSpace ? "active Space" : "outside active Space"
                     let visible = overlay.occlusionState.contains(.visible) ? "onscreen" : "occluded"
-                    let diagnostic = "\(lockScreenContent.title); \(render); \(space); \(visible); opacity \(Int(overlay.alphaValue * 100))%; background windows \(lockBackgroundWindowCount); additional windows \(lockAdditionalWindowCount)."
+                    let level = LockScreenOverlaySpace.shared.actualLevel.map(String.init) ?? "unknown"
+                    let diagnostic = "\(lockScreenContent.title); \(render); \(space); \(visible); opacity \(Int(overlay.alphaValue * 100))%; Space level \(level) (requested \(lockScreenContent.overlaySpaceLevel)); background windows \(lockBackgroundWindowCount); additional windows \(lockAdditionalWindowCount)."
                     if lockScreenStatus != diagnostic { lockScreenStatus = diagnostic }
+                    if now >= nextDiagnosticSnapshot {
+                        nextDiagnosticSnapshot = now + 1
+                        lastLockCapture = LockCaptureSnapshot(date: Date(), wallpaperWindows: lockBackgroundWindowCount,
+                            appWindows: lockAdditionalWindowCount, rendered: canvas.hasRenderedFrame,
+                            visible: overlay.occlusionState.contains(.visible), level: LockScreenOverlaySpace.shared.actualLevel,
+                            requestedLevel: lockScreenContent.overlaySpaceLevel)
+                        lockCaptureProblem = nil
+                    }
                 }
             }
             return
@@ -1593,7 +1928,7 @@ struct MacHardware {
         status = "Starting live desktop capture…"
         let token = generation
         let forLockScreen = screenLocked
-        if forLockScreen { lockScreenStatus = "Checking whether macOS exposes lock-screen content…" }
+        if forLockScreen { lockCaptureProblem = nil; lockScreenStatus = "Checking whether macOS exposes lock-screen content…" }
         Task {
             let capture = DesktopCapture()
             defer { capturing = false }
@@ -1624,62 +1959,16 @@ struct MacHardware {
                 }
                 let filter: SCContentFilter
                 if forLockScreen {
-                    // Require a visible full-screen login-window source before
-                    // beginning lock-screen capture in any mode.
-                    let hasLoginWindow = content.windows.contains {
-                        $0.owningApplication?.bundleIdentifier == "com.apple.loginwindow"
-                            && LockScreenCapturePolicy.accepts(bundleIdentifier: $0.owningApplication?.bundleIdentifier,
-                                onScreen: $0.isOnScreen, windowFrame: $0.frame, displayFrame: display.frame)
-                    }
-                    let selectedApplications = Set(selectedLockApplications.keys)
-                    let lockWindows = content.windows.filter {
-                        LockScreenCapturePolicy.accepts(bundleIdentifier: $0.owningApplication?.bundleIdentifier,
-                            onScreen: $0.isOnScreen, windowFrame: $0.frame, displayFrame: display.frame,
-                            content: lockScreenContent, selectedApplications: selectedApplications)
-                    }
-                    guard hasLoginWindow else {
-                        captureRetryAfter = ProcessInfo.processInfo.systemUptime + 1
-                        lockScreenStatus = "macOS is not exposing a full-screen login window. The lock-screen effect stays hidden."
-                        return
-                    }
-                    // Count the sources selected by the current capture scope.
-                    lockBackgroundWindowCount = lockWindows.filter {
-                        LockScreenCapturePolicy.isBackgroundProvider($0.owningApplication?.bundleIdentifier)
-                    }.count
-                    lockAdditionalWindowCount = lockWindows.filter {
-                        $0.owningApplication?.bundleIdentifier != "com.apple.loginwindow"
-                            && !LockScreenCapturePolicy.isBackgroundProvider($0.owningApplication?.bundleIdentifier)
-                    }.count
-                    if lockScreenContent == .everything {
-                        guard !ownApps.isEmpty else {
-                            throw NSError(domain: "Lidscape.Capture", code: 2,
-                                userInfo: [NSLocalizedDescriptionKey: "Cannot exclude Lidscape’s overlay from full-display capture."])
-                        }
-                        // Full-display capture also includes overlays that appear
-                        // after startup; process exclusion prevents recursion.
-                        filter = SCContentFilter(display: display, excludingApplications: ownApps, exceptingWindows: [])
-                    } else if lockScreenContent == .selectedApplications {
-                        let applications = content.applications.filter {
-                            selectedApplications.contains($0.bundleIdentifier)
-                                && $0.processID != ProcessInfo.processInfo.processIdentifier
-                                && $0.bundleIdentifier != "local.macfold.app"
-                        }
-                        let systemWindows = lockWindows.filter {
-                            $0.owningApplication?.bundleIdentifier == "com.apple.loginwindow"
-                                || LockScreenCapturePolicy.isBackgroundProvider($0.owningApplication?.bundleIdentifier)
-                        }
-                        // App inclusion keeps newly created windows from these
-                        // running apps in the stream. System windows are explicit
-                        // exceptions because their owners are outside that list.
-                        filter = SCContentFilter(display: display, including: applications, exceptingWindows: systemWindows)
-                    } else {
-                        filter = SCContentFilter(display: display, including: lockWindows)
-                    }
-                    let highestLoginLayer = content.windows.filter {
-                        $0.owningApplication?.bundleIdentifier == "com.apple.loginwindow"
-                            && $0.isOnScreen && $0.frame.intersects(display.frame)
-                    }.map(\.windowLayer).max() ?? 0
-                    lockOverlayLevel = max(Int(CGWindowLevelForKey(.assistiveTechHighWindow)), highestLoginLayer) + 1
+                    let lockWindows = try selectLockScreenWindows(content: content, display: display)
+                    // Explicit window inclusion captures overlays in private
+                    // Spaces that display-level capture can omit.
+                    filter = SCContentFilter(display: display, including: lockWindows)
+                    config.ignoreGlobalClipDisplay = true
+                    lockCaptureWindowIDs = Set(lockWindows.map(\.windowID))
+                    lockCaptureDisplayID = display.displayID
+                    lockOverlayLevel = lockScreenContent == .systemOnly
+                        ? max(Int(CGWindowLevelForKey(.assistiveTechHighWindow)), lockWindows.map(\.windowLayer).max() ?? 0) + 1
+                        : Int(CGWindowLevelForKey(.maximumWindow))
                 } else {
                     filter = SCContentFilter(display: display, excludingApplications: ownApps, exceptingWindows: [])
                 }
@@ -1691,61 +1980,164 @@ struct MacHardware {
             } catch {
                 capture.stop()
                 guard generation == token else { return }
-                if forLockScreen { lockScreenStatus = "Lock-screen capture failed: \(error.localizedDescription)" }
+                if forLockScreen { lockCaptureProblem = error.localizedDescription; lockScreenStatus = "Lock-screen capture failed: \(error.localizedDescription)" }
                 hide()
                 captureRetryAfter = ProcessInfo.processInfo.systemUptime + 1
                 needsScreenPermission = !CGPreflightScreenCaptureAccess()
-                if needsScreenPermission { enabled = false }
+                if needsScreenPermission { setEffectState(false, source: "Screen Recording access lost") }
                 status = "Desktop stream failed: \(error.localizedDescription)"
             }
         }
     }
 }
 
+enum SettingsPane: String, CaseIterable, Identifiable {
+    case preview, general, appearance, effect, calibration, lockScreen, activity
+    var id: Self { self }
+    var title: String {
+        switch self {
+        case .preview: return "Preview"
+        case .general: return "General"
+        case .appearance: return "Appearance"
+        case .activity: return "Activity"
+        case .effect: return "Fold Effect"
+        case .calibration: return "Calibration"
+        case .lockScreen: return "Lock Screen"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .preview: return "laptopcomputer"
+        case .general: return "gearshape"
+        case .appearance: return "paintpalette"
+        case .activity: return "chart.xyaxis.line"
+        case .effect: return "rectangle.lefthalf.inset.filled"
+        case .calibration: return "viewfinder"
+        case .lockScreen: return "lock"
+        }
+    }
+    var color: Color {
+        switch self {
+        case .preview: return .cyan
+        case .general: return .gray
+        case .appearance: return .purple
+        case .activity: return .green
+        case .effect: return .indigo
+        case .calibration: return .orange
+        case .lockScreen: return .blue
+        }
+    }
+}
+
+struct AppearanceThumbnail: View {
+    let appearance: AppAppearance
+    var body: some View {
+        HStack(spacing: 0) {
+            miniature(dark: appearance == .dark)
+            if appearance == .system { miniature(dark: true) }
+        }.frame(height: 82).clipShape(RoundedRectangle(cornerRadius: 9))
+    }
+    private func miniature(dark: Bool) -> some View {
+        HStack(spacing: 0) {
+            VStack(spacing: 5) {
+                ForEach(0..<4) { index in
+                    RoundedRectangle(cornerRadius: 2).fill(index == 1 ? Color.accentColor : (dark ? Color.white.opacity(0.15) : Color.black.opacity(0.1))).frame(height: 5)
+                }
+                Spacer(minLength: 0)
+            }.padding(7).frame(maxWidth: 35).background(dark ? Color(white: 0.19) : Color(white: 0.88))
+            VStack(spacing: 5) {
+                RoundedRectangle(cornerRadius: 3).fill(dark ? Color(white: 0.25) : .white).frame(height: 18)
+                RoundedRectangle(cornerRadius: 3).fill(dark ? Color(white: 0.25) : .white).frame(height: 24)
+                Spacer(minLength: 0)
+            }.padding(7).frame(maxWidth: .infinity).background(dark ? Color(white: 0.13) : Color(white: 0.95))
+        }
+    }
+}
+
 struct SettingsView: View {
     @State private var sideView = false
+    @State private var selection: SettingsPane? = .general
+    @State private var showResetConfirmation = false
+    @State private var showClearHistory = false
+    @State private var inspectedEventCluster: EffectEventCluster?
     @ObservedObject var model: FoldModel
+    private var effectEnabled: Binding<Bool> {
+        Binding(get: { model.enabled }, set: { model.setEnabled($0) })
+    }
     var body: some View {
-        VStack(spacing: 16) {
-            HStack {
-                Text("Lidscape").font(.title.bold())
-                Spacer()
-                Text(model.angle.map { "Lid \(Int($0))°" } ?? "No lid sensor").foregroundStyle(.secondary).monospacedDigit()
-                Toggle("Desktop effect", isOn: Binding(get: { model.enabled }, set: { model.setEnabled($0) })).toggleStyle(.switch)
-            }
-            HStack {
-                Text(model.status).font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                if model.needsScreenPermission {
-                    Button("Open Screen Recording") { model.openScreenRecordingSettings() }
+        NavigationSplitView {
+            List(selection: $selection) {
+                sidebarRow(.preview)
+                Section("Settings") {
+                    ForEach(SettingsPane.allCases.filter { $0 != .preview }) { pane in sidebarRow(pane) }
                 }
-                if model.checkingCapture { ProgressView().controlSize(.small) }
             }
-            TabView {
-                previewTab.tabItem { Label("Preview", systemImage: "laptopcomputer") }
-                settingsTab.tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
+            .listStyle(.sidebar)
+            .navigationTitle("Lidscape")
+            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 240)
+            .safeAreaInset(edge: .bottom) {
+                HStack(spacing: 8) {
+                    Circle().fill(model.menuStatusColor).frame(width: 7, height: 7)
+                    Text(model.menuStatus).lineLimit(1)
+                    Spacer()
+                    Text(model.angle.map { "\(Int($0))°" } ?? "—").monospacedDigit()
+                }
+                .font(.caption).foregroundStyle(.secondary).padding(14)
             }
-        }.padding(20).frame(width: 690, height: min(680, (NSScreen.main?.visibleFrame.height ?? 900) - 100))
+        } detail: {
+            VStack(spacing: 0) {
+                if model.needsScreenPermission {
+                    HStack {
+                        Label("Screen Recording access is needed.", systemImage: "rectangle.on.rectangle")
+                        Spacer()
+                        Button("Open System Settings…") { model.openScreenRecordingSettings() }
+                    }.font(.callout).padding().background(.quaternary)
+                }
+                paneContent
+            }
+            .navigationTitle((selection ?? .general).title)
+            .toolbar {
+                if #available(macOS 26.0, *) {
+                    ToolbarItem(placement: .primaryAction) { EffectControl(model: model).padding(.trailing, 12) }
+                        .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .primaryAction) { EffectControl(model: model).padding(.trailing, 12) }
+                }
+            }
+        }
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 840, idealWidth: 900, minHeight: 580, idealHeight: 680)
+        .confirmationDialog("Reset Lidscape settings?", isPresented: $showResetConfirmation, titleVisibility: .visible) {
+            Button("Reset settings", role: .destructive) { model.resetSettings(); sideView = false }
+        } message: {
+            Text("Restores effect, calibration, preview, and app preferences. Animation will pause. Launch at login and macOS permissions stay unchanged.")
+        }
+        .confirmationDialog("Clear activity history?", isPresented: $showClearHistory, titleVisibility: .visible) {
+            Button("Clear history", role: .destructive) { model.clearActivity() }
+        } message: { Text("Removes saved daily totals, angle changes, enable/pause events, and the live graph. New activity will start recording immediately.") }
+    }
+    private func sidebarRow(_ pane: SettingsPane) -> some View {
+        Label {
+            Text(pane.title)
+        } icon: {
+            Image(systemName: pane.symbol).font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white).frame(width: 24, height: 24)
+                .background(pane.color.gradient, in: RoundedRectangle(cornerRadius: 5))
+        }.padding(.vertical, 3).tag(pane)
+    }
+    @ViewBuilder private var paneContent: some View {
+        switch selection ?? .general {
+        case .preview: previewTab
+        case .general: generalPane
+        case .appearance: appearancePane
+        case .activity: activityPane
+        case .effect: effectPane
+        case .calibration: calibrationPane
+        case .lockScreen: lockScreenPane
+        }
     }
     private var previewTab: some View {
         VStack(spacing: 12) {
-            HStack {
-                Picker("Model", selection: $model.previewModel) {
-                    Text("MacBook Pro 14″").tag("MacBookPro14")
-                    Text("MacBook Air 13″").tag("MacBookAir13")
-                    Text("MacBook Air 15″").tag("MacBookAir15")
-                    Text("Simple").tag("Simple")
-                }
-                Picker("Color", selection: $model.previewColor) {
-                    ForEach(model.availableColors, id: \.self) { Text($0).tag($0) }
-                }.frame(width: 200).disabled(model.previewModel == "Simple")
-            }
-            HStack {
-                Text("Detected Mac: " + model.hardwareIdentifier).font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button("Use my Mac") { model.useDetectedModel() }
-                    .disabled(MacHardware.previewModel(for: model.hardwareIdentifier) == nil)
-            }
             MacBookBridge(progress: model.previewProjectionProgress, source: model.artwork, referenceDegrees: model.previewStart, geometry: model.geometry, sideView: sideView, resetAmount: model.previewReset, blurStrength: model.blurStrength, model: model.previewAsset, fadeStrength: model.fadeStrength, smoothing: model.smoothing)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
             Picker("Camera", selection: $sideView) {
@@ -1769,87 +2161,349 @@ struct SettingsView: View {
         }.padding(14)
             .onDisappear { if model.previewPlaying { model.togglePreviewPlayback() } }
     }
-    private var settingsTab: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                GroupBox("App behavior") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Toggle("Show Dock icon", isOn: $model.showDockIcon)
-                        Toggle("Enable animation on launch", isOn: $model.enableAtLaunch)
-                        Toggle("Live desktop capture", isOn: $model.liveDesktopCapture)
-                        Text(model.liveDesktopCapture ? "Desktop content updates throughout the fold." : "Uses a still image for each fold. Capture stops after the first frame.").font(.caption).foregroundStyle(.secondary)
-                        Toggle("Lock-screen fold (experimental)", isOn: $model.lockScreenEffect)
-                        Picker("Lock-screen content", selection: $model.lockScreenContent) {
-                            ForEach(LockScreenContent.allCases, id: \.self) { content in
-                                Text(content.title).tag(content)
-                            }
+    private var generalPane: some View {
+        Form {
+            Section {
+                Toggle("Desktop effect", isOn: effectEnabled)
+                Toggle("Live desktop capture", isOn: $model.liveDesktopCapture)
+            } header: { Text("Animation") } footer: {
+                Text(model.liveDesktopCapture ? "Content stays live throughout the fold." : "Captures a still image for each fold, then stops recording.")
+            }
+            Section("Startup") {
+                Toggle("Launch at login", isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) }))
+                if model.loginNeedsApproval {
+                    Button("Approve in Login Items…") { SMAppService.openSystemSettingsLoginItems() }
+                }
+                Toggle("Enable animation on launch", isOn: $model.enableAtLaunch)
+            }
+            Section {
+                LabeledContent("Status") { Text(model.status).foregroundStyle(.secondary).textSelection(.enabled) }
+                LabeledContent("Display") { Text(model.displaySizeDescription.replacingOccurrences(of: "Display: ", with: "")).foregroundStyle(.secondary) }
+                LabeledContent("Refresh rate") { Text("\(model.refreshRate) Hz").foregroundStyle(.secondary) }
+                Button("Reset settings…") { showResetConfirmation = true }
+            } header: { Text("About this setup") } footer: { Text("Changes save automatically.") }
+        }.formStyle(.grouped).toggleStyle(.switch)
+    }
+    private var effectPane: some View {
+        Form {
+            Section {
+                sliderRow("Start below", value: $model.trigger, range: 35...150, step: 1, readout: "\(Int(model.trigger))°")
+                sliderRow("Smoothing", value: $model.smoothing, range: 0.025...0.14, step: 0.001, readout: "\(Int(model.smoothing * 1000)) ms")
+            } header: { Text("Motion") } footer: {
+                Text("The effect begins below your starting angle. More smoothing softens motion and adds a little delay.")
+            }
+            Section {
+                sliderRow("Blur", value: $model.blurStrength, range: 0...2, readout: "\(Int(model.blurStrength * 100))%")
+                sliderRow("Fade to black", value: $model.fadeStrength, range: 0...2, readout: "\(Int(model.fadeStrength * 100))%")
+            } header: { Text("Appearance") } footer: {
+                Text("Blur and darkening grow toward the top of the screen as the lid closes. Set either to 0% to disable it.")
+            }
+            Section {
+                Toggle("Hold to reset", isOn: $model.holdToReset)
+                if model.holdToReset {
+                    sliderRow("Reset delay", value: $model.holdDelay, range: 0.5...3, step: 0.1, readout: String(format: "%.1f s", model.holdDelay))
+                }
+            } header: { Text("Return to normal") } footer: {
+                Text("Hold the lid still to ease back to your normal desktop. Moving it again brings the effect back.")
+            }
+        }.formStyle(.grouped).toggleStyle(.switch)
+    }
+    private var calibrationPane: some View {
+        Form {
+            Section {
+                sliderRow("Viewing distance", value: $model.geometry.distance, range: 300...1000, step: 10, readout: "\(Int(model.geometry.distance / 10)) cm")
+                LabeledContent("Current lid angle") { Text(model.angle.map { "\(Int($0))°" } ?? "Sensor unavailable").foregroundStyle(.secondary) }
+                Button("Calibrate from current lid") { model.calibrateFromLid() }.disabled(model.angle == nil)
+            } header: { Text("Viewing position") } footer: {
+                Text("Set the distance from your eyes to the hinge. Sit comfortably, look at the screen center, then calibrate.")
+            }
+            Section {
+                Toggle("Auto-calibrate when the lid settles", isOn: $model.autoCalibrate)
+                if model.autoCalibrate {
+                    sliderRow("Calibration delay", value: $model.autoCalibrationDelay, range: 0.5...8, step: 0.1, readout: String(format: "%.1f s", model.autoCalibrationDelay))
+                    sliderRow("Minimum angle", value: $model.minimumCalibrationAngle, range: 0...120, step: 1, readout: "\(Int(model.minimumCalibrationAngle))°")
+                }
+            } header: { Text("Automatic calibration") } footer: {
+                Text("Adopts your comfortable lid position after it stays still. The minimum angle only limits automatic calibration.")
+            }
+            Section("Advanced") {
+                DisclosureGroup("Manual eye height") {
+                    sliderRow("Height above hinge", value: $model.geometry.eyeHeight, range: -600...3000, step: 10, readout: "\(Int(model.geometry.eyeHeight / 10)) cm")
+                }
+                Picker("Preview zero", selection: $model.eyeRelativePreview) {
+                    Text("Lid closed").tag(false)
+                    Text("Edge-on to eyes").tag(true)
+                }
+            }
+        }.formStyle(.grouped).toggleStyle(.switch)
+    }
+    private var lockScreenPane: some View {
+        Form {
+            Section {
+                Toggle("Lock-screen fold", isOn: $model.lockScreenEffect)
+            } footer: { Text("Apply the same lid-driven fold while your Mac is locked.") }
+            Section {
+                Picker("Include", selection: $model.lockScreenContent) {
+                    ForEach(LockScreenContent.allCases, id: \.self) { content in Text(content.title).tag(content) }
+                }
+                if model.lockScreenContent == .selectedApplications {
+                    ForEach(model.selectedLockApplications.keys.sorted {
+                        (model.selectedLockApplications[$0] ?? $0).localizedStandardCompare(model.selectedLockApplications[$1] ?? $1) == .orderedAscending
+                    }, id: \.self) { identifier in
+                        HStack {
+                            Text(model.selectedLockApplications[identifier] ?? identifier)
+                            Spacer()
+                            Button { model.selectedLockApplications.removeValue(forKey: identifier) } label: {
+                                Image(systemName: "minus.circle")
+                            }.buttonStyle(.borderless).accessibilityLabel("Remove " + (model.selectedLockApplications[identifier] ?? identifier))
                         }
-                        Text(model.lockScreenContent.explanation).font(.caption).foregroundStyle(.secondary)
-                        if model.lockScreenContent == .selectedApplications {
-                            Button("Choose applications…") { model.chooseLockScreenApplications() }
-                            if model.selectedLockApplications.isEmpty {
-                                Text("No apps selected. System lock-screen content is still included.").font(.caption).foregroundStyle(.secondary)
-                            }
-                            ForEach(model.selectedLockApplications.keys.sorted {
-                                (model.selectedLockApplications[$0] ?? $0).localizedStandardCompare(model.selectedLockApplications[$1] ?? $1) == .orderedAscending
-                            }, id: \.self) { identifier in
-                                HStack {
-                                    Text(model.selectedLockApplications[identifier] ?? identifier)
-                                    Spacer()
-                                    Button { model.selectedLockApplications.removeValue(forKey: identifier) } label: {
-                                        Image(systemName: "minus.circle")
-                                    }.help("Remove this application")
+                    }
+                    Button("Choose applications…") { model.chooseLockScreenApplications() }
+                    if model.selectedLockApplications.isEmpty {
+                        Text("No apps selected. System content is still included.").foregroundStyle(.secondary)
+                    }
+                }
+            } header: { Text("Content") } footer: { Text(model.lockScreenContent.explanation) }
+            Section {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: model.lockCaptureProblem != nil ? "exclamationmark.triangle.fill" : (model.lockScreenEffect && model.overlayPlacementReady ? "checkmark.circle.fill" : "info.circle.fill"))
+                        .foregroundStyle(model.lockCaptureProblem != nil ? Color.orange : (model.lockScreenEffect && model.overlayPlacementReady ? Color.green : Color.secondary))
+                        .font(.title2)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(model.lockReadinessTitle).font(.headline)
+                        Text(model.lockReadinessDetail).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                }.padding(.vertical, 5)
+                LabeledContent("Overlay placement", value: model.overlayPlacementReady ? "Ready" : "Not prepared")
+                if let capture = model.lastLockCapture {
+                    LabeledContent("Last fold") { Text(capture.date, format: .dateTime.hour().minute().second()).foregroundStyle(.secondary) }
+                    LabeledContent("Wallpaper windows", value: "\(capture.wallpaperWindows)")
+                    LabeledContent("App overlay windows", value: "\(capture.appWindows)")
+                    LabeledContent("Renderer", value: capture.rendered ? "Frame rendered" : "Waiting for a frame")
+                    LabeledContent("Visibility", value: capture.visible ? "Visible during last fold" : "Occluded during last fold")
+                } else {
+                    Text("No lock-screen fold recorded this launch.").foregroundStyle(.secondary)
+                }
+            } header: { Text("Status") }
+            Section {
+                DisclosureGroup("Technical details") {
+                    LabeledContent("Overlay level", value: model.overlaySpaceLevel.map(String.init) ?? "Not available")
+                    LabeledContent("Requested level", value: String(model.lockScreenContent.overlaySpaceLevel))
+                    Text(model.lockScreenStatus).font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                }
+                Button("Copy diagnostics", systemImage: "doc.on.doc") { model.copyLockDiagnostics() }
+            }
+
+        }.formStyle(.grouped).toggleStyle(.switch)
+    }
+    private var appearancePane: some View {
+        Form {
+            Section {
+                HStack(spacing: 16) {
+                    ForEach(AppAppearance.allCases) { choice in
+                        Button { model.appearance = choice } label: {
+                            VStack(spacing: 10) {
+                                AppearanceThumbnail(appearance: choice)
+                                    .overlay(RoundedRectangle(cornerRadius: 9).stroke(model.appearance == choice ? Color.accentColor : Color.secondary.opacity(0.25), lineWidth: model.appearance == choice ? 3 : 1))
+                                HStack(spacing: 5) {
+                                    Image(systemName: model.appearance == choice ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(model.appearance == choice ? Color.accentColor : Color.secondary)
+                                    Text(choice.title).foregroundStyle(.primary)
+                                }.font(.callout)
+                            }.frame(maxWidth: .infinity).contentShape(Rectangle())
+                        }.buttonStyle(.plain).accessibilityLabel(choice.title + " appearance")
+                            .accessibilityAddTraits(model.appearance == choice ? .isSelected : [])
+                    }
+                }.padding(.vertical, 10)
+            } header: { Text("Appearance") } footer: {
+                Text("System follows your Mac’s appearance. Your choice applies to Lidscape’s windows and menu panel.")
+            }
+            Section {
+                Toggle("Show Dock icon", isOn: $model.showDockIcon)
+            } header: { Text("Dock & menu bar") } footer: {
+                Text("Lidscape is always available from its laptop icon in the menu bar.")
+            }
+        }.formStyle(.grouped).toggleStyle(.switch)
+    }
+    private var weekActivity: [DailyActivity] {
+        let calendar = Calendar.current
+        return (-6...0).map { offset in
+            let day = calendar.date(byAdding: .day, value: offset, to: calendar.startOfDay(for: Date()))!
+            return model.activity.days.first { calendar.isDate($0.date, inSameDayAs: day) } ?? DailyActivity(date: day)
+        }
+    }
+    private var recentActivity: [ActivityTimelineEntry] {
+        let angles = model.activity.changes.map { change in
+            ActivityTimelineEntry(id: change.id, date: change.date,
+                title: "\(Int(change.previous.rounded()))° → \(Int(change.angle.rounded()))°",
+                detail: change.reason, symbol: "viewfinder", color: .blue)
+        }
+        let states = model.activity.stateEvents.map { event in
+            ActivityTimelineEntry(id: event.id, date: event.date,
+                title: event.enabled ? "Effect enabled" : "Effect paused", detail: event.source,
+                symbol: event.enabled ? "play.fill" : "pause.fill", color: event.enabled ? .green : .orange)
+        }
+        return Array((angles + states).sorted { $0.date > $1.date }.prefix(20))
+    }
+    private var chartEventClusters: [EffectEventCluster] { EffectEventCluster.group(chartStateEvents) }
+    private var chartStateEvents: [EffectStateEvent] {
+        let now = Date()
+        return model.activity.stateEvents.filter { $0.date >= now.addingTimeInterval(-300) && $0.date <= now }
+    }
+    private var activityPane: some View {
+        Form {
+            Section {
+                HStack(spacing: 20) {
+                    activityMetric("Folds today", value: String(model.todayActivity.folds))
+                    Divider()
+                    activityMetric("Time folding", value: model.todayActivity.seconds < 60 ? "\(Int(model.todayActivity.seconds)) s" : String(format: "%.1f min", model.todayActivity.seconds / 60))
+                    Divider()
+                    activityMetric("Start angle", value: "\(Int(model.trigger))°")
+                }.padding(.vertical, 8)
+            }
+            Section {
+                if model.angleSamples.count >= 2 {
+                    Chart {
+                        ForEach(model.angleSamples) { sample in
+                            LineMark(x: .value("Time", sample.date), y: .value("Angle", sample.angle), series: .value("Trace", "Lid angle"))
+                                .foregroundStyle(by: .value("Trace", "Lid angle")).lineStyle(StrokeStyle(lineWidth: 2))
+                            LineMark(x: .value("Time", sample.date), y: .value("Angle", sample.reference), series: .value("Trace", "Start angle"))
+                                .foregroundStyle(by: .value("Trace", "Start angle")).lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 4])).interpolationMethod(.stepEnd)
+                        }
+                        ForEach(chartEventClusters) { cluster in
+                            RuleMark(x: .value("Effect state changed", cluster.date))
+                                .foregroundStyle(cluster.enabled ? Color.green : Color.orange)
+                                .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
+                                .accessibilityLabel(cluster.events.count > 1 ? "\(cluster.events.count) effect state changes" : (cluster.enabled ? "Effect enabled" : "Effect paused"))
+                                .accessibilityValue(Text(cluster.date, format: .dateTime.hour().minute().second()))
+                        }
+                    }
+                    .chartForegroundStyleScale(["Lid angle": Color.accentColor, "Start angle": Color.orange])
+                    .chartYScale(domain: 0...180)
+                    .chartXScale(domain: Date().addingTimeInterval(-300)...Date())
+                    .chartXAxis { AxisMarks(values: .stride(by: .minute)) { _ in AxisGridLine(); AxisValueLabel(format: .dateTime.hour().minute()) } }
+                    .chartYAxis { AxisMarks(values: [0, 45, 90, 135, 180]) { value in AxisGridLine(); AxisValueLabel { if let degrees = value.as(Int.self) { Text("\(degrees)°") } } } }
+                    .frame(height: 180).padding(.vertical, 8)
+                    .accessibilityLabel("Live lid angle and starting angle over the last five minutes")
+                    if !chartEventClusters.isEmpty {
+                        ScrollView(.horizontal) {
+                            HStack(spacing: 10) {
+                                ForEach(chartEventClusters.reversed()) { cluster in
+                                    Button { inspectedEventCluster = cluster } label: {
+                                        HStack(spacing: 5) {
+                                            Image(systemName: cluster.events.count > 1 ? "arrow.left.arrow.right" : (cluster.enabled ? "play.fill" : "pause.fill"))
+                                                .foregroundStyle(cluster.enabled ? Color.green : Color.orange)
+                                            Text(cluster.events.count > 1 ? "\(cluster.events.count) changes" : (cluster.enabled ? "Enabled" : "Paused"))
+                                            Text(cluster.date, format: .dateTime.hour().minute().second()).foregroundStyle(.secondary)
+                                        }.font(.caption).padding(.horizontal, 9).padding(.vertical, 6)
+                                    }.buttonStyle(.bordered).help("Show exact event times")
                                 }
-                            }
+                            }.padding(.vertical, 3)
                         }
-                        if model.lockScreenEffect {
-                            Text("Lock with Control–Command–Q, then move the lid. Each test lasts up to 90 seconds. This option resets when Lidscape quits.").font(.caption).foregroundStyle(.secondary)
-                            Text(model.lockScreenStatus).font(.caption).foregroundStyle(.secondary)
+                        .popover(item: $inspectedEventCluster) { cluster in
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Effect events").font(.headline)
+                                ForEach(cluster.events) { event in
+                                    HStack(spacing: 10) {
+                                        Label(event.enabled ? "Enabled" : "Paused", systemImage: event.enabled ? "play.fill" : "pause.fill")
+                                            .foregroundStyle(event.enabled ? Color.green : Color.orange)
+                                        Spacer()
+                                        Text(event.date, format: .dateTime.hour().minute().second()).monospacedDigit()
+                                    }.font(.callout)
+                                }
+                            }.padding(18).frame(minWidth: 260)
                         }
-                        Toggle("Launch at login", isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) }))
-                        if model.loginNeedsApproval {
-                            Button("Approve in Login Items…") { SMAppService.openSystemSettingsLoginItems() }
-                        }
-                        Text("When off, Lidscape stays in the menu bar. Use its laptop icon to open Settings or quit.").font(.caption).foregroundStyle(.secondary)
-                    }.padding(8)
+                    }
+                } else {
+                    ContentUnavailableView("Waiting for the lid sensor", systemImage: "waveform.path", description: Text("A live graph will appear as angle readings arrive."))
+                        .frame(height: 170)
                 }
-                GroupBox("Viewing position") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack { Text("Distance"); Slider(value: $model.geometry.distance, in: 300...1000, step: 10); Text("\(Int(model.geometry.distance / 10)) cm").frame(width: 65) }
-                        Button("Calibrate from current lid") { model.calibrateFromLid() }.disabled(model.angle == nil)
-                        Toggle("Auto-calibrate when the lid settles", isOn: $model.autoCalibrate)
-                        if model.autoCalibrate {
-                            HStack { Text("Calibration delay"); Slider(value: $model.autoCalibrationDelay, in: 0.5...8, step: 0.1); Text(String(format: "%.1f s", model.autoCalibrationDelay)).frame(width: 65) }
-                            HStack { Text("Minimum calibration angle"); Slider(value: $model.minimumCalibrationAngle, in: 0...120, step: 1); Text("\(Int(model.minimumCalibrationAngle))°").frame(width: 65) }
-                            Text("Physical lid angle. Below this, only auto-calibration is blocked.").font(.caption).foregroundStyle(.secondary)
-                        }
-                        Text("Set distance, sit comfortably, then calibrate while looking straight at the screen center.").font(.caption).foregroundStyle(.secondary)
-                        DisclosureGroup("Manual eye height") {
-                            HStack { Slider(value: $model.geometry.eyeHeight, in: -600...3000, step: 10); Text("\(Int(model.geometry.eyeHeight / 10)) cm") }
-                        }
-                        Picker("Preview zero", selection: $model.eyeRelativePreview) {
-                            Text("Lid closed").tag(false)
-                            Text("Edge-on to eyes").tag(true)
-                        }
-                    }.padding(8)
+                if model.angle == nil { Label("Lid sensor is currently unavailable.", systemImage: "info.circle").foregroundStyle(.secondary) }
+            } header: { Text("Live angles · last 5 minutes") } footer: {
+                Text("The horizontal dashed line is your starting angle. Vertical markers show pauses (orange) and enables (green). Nearby changes are grouped; select an event below for exact times.")
+            }
+            Section("This week") {
+                Chart(weekActivity) { day in
+                    BarMark(x: .value("Day", day.date, unit: .day), y: .value("Folds", day.folds))
+                        .foregroundStyle(Color.accentColor.gradient).cornerRadius(4)
                 }
-                GroupBox("Fold effect") {
-                    VStack(spacing: 12) {
-                        HStack { Text("Smoothing"); Slider(value: $model.smoothing, in: 0.025...0.14); Text("\(Int(model.smoothing * 1000)) ms").frame(width: 65) }
-                        HStack { Text("Blur"); Slider(value: $model.blurStrength, in: 0...2); Text("\(Int(model.blurStrength * 100))%").frame(width: 65) }
-                        HStack { Text("Fade to black"); Slider(value: $model.fadeStrength, in: 0...2); Text("\(Int(model.fadeStrength * 100))%").frame(width: 65) }
-                        Text("Darkens toward the top as the lid folds. Set to 0% to disable.").font(.caption).foregroundStyle(.secondary)
-                        Toggle("Hold to reset", isOn: $model.holdToReset)
-                        if model.holdToReset {
-                            HStack { Text("Reset delay"); Slider(value: $model.holdDelay, in: 0.5...3, step: 0.1); Text(String(format: "%.1f s", model.holdDelay)).frame(width: 65) }
-                        }
-                        HStack { Text("Start below"); Slider(value: $model.trigger, in: 35...150, step: 1); Text("\(Int(model.trigger))°").frame(width: 65) }
-                    }.padding(8)
+                .chartYScale(domain: 0...max(5, weekActivity.map(\.folds).max() ?? 0))
+                .chartXAxis { AxisMarks(values: .stride(by: .day)) { _ in AxisValueLabel(format: .dateTime.weekday(.abbreviated)) } }
+                .frame(height: 130).padding(.vertical, 8)
+                .accessibilityLabel("Fold counts for the last seven days")
+            }
+            Section {
+                if recentActivity.isEmpty {
+                    Text("Enable or pause the effect, calibrate, or adjust your starting angle to begin your history.").foregroundStyle(.secondary)
                 }
-                Button("Reset settings") { model.resetSettings(); sideView = false }
-                Text(model.status).font(.callout).foregroundStyle(.secondary)
-                Text(model.displaySizeDescription + " · Target \(model.refreshRate) Hz").font(.caption).foregroundStyle(.secondary)
-            }.padding(14)
+                ForEach(recentActivity) { entry in
+                    HStack(spacing: 12) {
+                        Image(systemName: entry.symbol).font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(entry.color).frame(width: 30, height: 30)
+                            .background(entry.color.opacity(0.13), in: RoundedRectangle(cornerRadius: 8))
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(entry.title).monospacedDigit()
+                            Text(entry.detail).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(entry.date, format: .dateTime.month(.abbreviated).day().hour().minute()).font(.caption).foregroundStyle(.secondary)
+                    }.padding(.vertical, 3)
+                }
+            } header: { Text("Recent history") }
+            Section {
+                Button("Clear activity history…") { showClearHistory = true }
+            } footer: { Text("History stays on this Mac. Daily totals are kept for 30 days. The live graph covers this app session.") }
+        }.formStyle(.grouped)
+    }
+    private func activityMetric(_ title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.system(.title2, design: .rounded, weight: .semibold)).monospacedDigit()
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private func sliderRow(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, step: Double = 0.01, readout: String) -> some View {
+        LabeledContent(title) {
+            HStack(spacing: 12) {
+                Slider(value: Binding(get: { value.wrappedValue }, set: {
+                    value.wrappedValue = min(range.upperBound, max(range.lowerBound, ($0 / step).rounded() * step))
+                }), in: range).labelsHidden().accessibilityLabel(title)
+                    .frame(minWidth: 110, idealWidth: 170, maxWidth: 220)
+                Text(readout).monospacedDigit().foregroundStyle(.secondary).frame(width: 56, alignment: .trailing)
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+struct EffectControl: View {
+    @ObservedObject var model: FoldModel
+    private var color: Color { model.enabled ? .orange : .green }
+    var body: some View {
+        Group {
+            if #available(macOS 26.0, *) {
+                control.buttonStyle(.glass).buttonBorderShape(.capsule)
+            } else {
+                control.buttonStyle(.bordered).buttonBorderShape(.capsule)
+            }
+        }
+        .tint(color).controlSize(.regular).fixedSize().disabled(model.checkingCapture)
+        .help(model.enabled ? "Pause desktop effect" : "Enable desktop effect")
+        .accessibilityLabel(model.enabled ? "Pause desktop effect" : "Enable desktop effect")
+    }
+    private var control: some View {
+        Button { model.setEnabled(!model.enabled) } label: {
+            HStack(spacing: 6) {
+                ZStack {
+                    Image(systemName: model.enabled ? "pause.fill" : "play.fill")
+                        .opacity(model.checkingCapture ? 0 : 1)
+                    if model.checkingCapture { ProgressView().controlSize(.mini) }
+                }.frame(width: 14, height: 14)
+                Text(model.enabled ? "Pause" : "Enable")
+            }
+            .font(.system(size: 13, weight: .semibold)).foregroundStyle(color)
+            .frame(width: 76, height: 18).contentTransition(.identity)
+            .transaction { transaction in transaction.animation = nil; transaction.disablesAnimations = true }
         }
     }
 }
@@ -1858,15 +2512,59 @@ struct LidscapeMenu: View {
     @ObservedObject var model: FoldModel
     @Environment(\.openWindow) private var openWindow
     var body: some View {
-        Text("Lidscape · " + model.menuStatus)
-        Divider()
-        Button(model.enabled ? "Pause animation" : "Enable animation") { model.setEnabled(!model.enabled) }
-        Button("Open Lidscape…") {
-            openWindow(id: "settings")
-            NSApp.activate(ignoringOtherApps: true)
-        }.keyboardShortcut(",")
-        Divider()
-        Button("Quit Lidscape") { NSApplication.shared.terminate(nil) }.keyboardShortcut("q")
+        VStack(spacing: 14) {
+            HStack(spacing: 10) {
+                Image(systemName: "laptopcomputer").font(.system(size: 25, weight: .light))
+                    .foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Lidscape").font(.headline)
+                    HStack(spacing: 5) {
+                        Circle().fill(model.menuStatusColor).frame(width: 6, height: 6)
+                        Text(model.menuStatus).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Text(model.angle.map { "\(Int($0))°" } ?? "—")
+                    .font(.system(size: 28, weight: .light, design: .rounded)).monospacedDigit()
+                    .accessibilityLabel(model.angle.map { "Lid angle \(Int($0)) degrees" } ?? "Lid sensor unavailable")
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Desktop effect").font(.headline)
+                    Spacer()
+                    EffectControl(model: model)
+                }
+                Text(model.enabled ? (model.holdToReset ? "Folds as your lid closes. Hold still to return." : "Folds as your lid closes.") : "Animation is paused.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Divider()
+                Toggle("Live capture", isOn: $model.liveDesktopCapture).toggleStyle(.switch)
+                Toggle("Lock-screen fold", isOn: $model.lockScreenEffect).toggleStyle(.switch)
+            }
+            .padding(12).background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12))
+            if model.needsScreenPermission {
+                Button("Allow Screen Recording…") { model.openScreenRecordingSettings() }
+                    .frame(maxWidth: .infinity)
+            } else {
+                HStack {
+                    Label("Starts below \(Int(model.trigger))°", systemImage: "angle")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Calibrate") { model.calibrateFromLid() }
+                        .disabled(model.angle == nil)
+                        .help("Use the current lid angle as your comfortable viewing position")
+                }
+            }
+            Divider()
+            HStack {
+                Button { openWindow(id: "settings"); NSApp.activate(ignoringOtherApps: true) } label: {
+                    Label("Settings…", systemImage: "slider.horizontal.3")
+                }.keyboardShortcut(",")
+                Spacer()
+                Button("Quit") { NSApplication.shared.terminate(nil) }.keyboardShortcut("q")
+            }
+            .buttonStyle(.plain).foregroundStyle(.secondary)
+        }
+        .padding(16).frame(width: 310)
     }
 }
 
@@ -1883,6 +2581,7 @@ struct LidscapeMenu: View {
             }.help("Lidscape · " + model.menuStatus)
                 .accessibilityLabel("Lidscape · " + model.menuStatus)
         }
+        .menuBarExtraStyle(.window)
         Settings { SettingsView(model: model) }
     }
 }
