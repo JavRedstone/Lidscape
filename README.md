@@ -41,7 +41,9 @@ Choose **Light**, **Dark**, or **System** appearance. Enable and Pause controls 
 <details>
 <summary>Activity charts and history</summary>
 
-<img src="docs/images/activity.jpg" alt="Lidscape Activity pane showing today's fold count and time, live lid and starting angles, and the weekly fold chart" width="760">
+<img src="docs/images/activity.jpg" alt="Illustrative Lidscape Activity data showing repeated lid movements, starting-angle changes, grouped pause/enable markers, and varied weekly fold counts" width="760">
+
+*Illustrative data showing lid movement, calibration changes, and pause/enable events.*
 
 Track live lid angles, daily folds, and time folding. Recent history records calibration changes and enable/pause events. Nearby chart events are grouped, with exact times available on selection. History stays on your Mac and can be cleared in **Activity**.
 
