@@ -40,11 +40,19 @@ import SceneKit
         precondition(defaults.trigger == 90 && defaults.blurStrength == 1)
         precondition(defaults.autoCalibrate && defaults.minimumCalibrationAngle == 30 && defaults.holdToReset)
         defaults.lockScreenEffect = true
-        let prepared = NSApp.windows.first { $0 is FoldOverlayPanel && $0.canBecomeVisibleWithoutLogin }!
-        precondition(prepared.isVisible && prepared.ignoresMouseEvents && !prepared.canBecomeKey)
-        precondition(!(prepared.contentView is MetalFoldView), "The prepared panel must contain no desktop renderer before locking")
-        defaults.lockScreenEffect = false
-        precondition(!prepared.isVisible, "Disabling the experiment must close its prepared window")
+        if let prepared = NSApp.windows.first(where: { $0 is FoldOverlayPanel && $0.canBecomeVisibleWithoutLogin }) {
+            precondition(prepared.isVisible && prepared.ignoresMouseEvents && !prepared.canBecomeKey)
+            precondition(!(prepared.contentView is MetalFoldView), "The prepared panel must contain no desktop renderer before locking")
+            defaults.lockScreenEffect = false
+            precondition(!prepared.isVisible, "Disabling the experiment must close its prepared window")
+        } else {
+            precondition(!NSScreen.screens.contains { screen in
+                guard let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value else { return false }
+                return CGDisplayIsBuiltin(id) != 0
+            }, "A built-in display must have a prepared lock-screen panel")
+            defaults.lockScreenEffect = false
+            print("PASS: no lock-screen panel is created without a built-in display")
+        }
         let geometry = ViewingGeometry()
         let edge = geometry.edgeOnDegrees * .pi / 180
         // At edge-on the screen normal is perpendicular to the eye vector.
