@@ -11,16 +11,26 @@ import SceneKit
         let preferences = UserDefaults(suiteName: suite)!
         defer { preferences.removePersistentDomain(forName: suite) }
         let saved = FoldModel(preferences: preferences)
+        precondition(saved.liveDesktopCapture, "Existing preferences must default to live capture")
+        precondition(saved.lockScreenContent == .everything)
+        saved.lockScreenContent = .selectedApplications
+        saved.selectedLockApplications = ["example.chosen-app": "Chosen app", "com.Jackson.DynamicNotch": "DynamicNotch"]
+        saved.liveDesktopCapture = false
         saved.enableAtLaunch = false; saved.showDockIcon = false; saved.trigger = 112; saved.geometry.distance = 720; saved.fadeStrength = 1.3
         saved.previewModel = "MacBookAir15"; saved.previewColor = "Midnight"
         saved.holdToReset = false; saved.autoCalibrationDelay = 2.4
         let restored = FoldModel(preferences: preferences)
+        precondition(!restored.liveDesktopCapture, "The capture mode must survive relaunch")
+        precondition(restored.lockScreenContent == .selectedApplications, "The lock-screen content choice must survive relaunch")
         precondition(!restored.showDockIcon && !restored.enableAtLaunch)
         precondition(restored.trigger == 112 && restored.geometry.distance == 720 && restored.fadeStrength == 1.3)
         precondition(restored.previewModel == "MacBookAir15" && restored.previewColor == "Midnight")
         precondition(!restored.holdToReset && restored.autoCalibrationDelay == 2.4)
+        precondition(restored.selectedLockApplications == saved.selectedLockApplications, "Selected applications must survive relaunch")
         restored.resetSettings()
         let resetReload = FoldModel(preferences: preferences)
+        precondition(resetReload.liveDesktopCapture, "Reset must restore live capture")
+        precondition(resetReload.lockScreenContent == .everything && resetReload.selectedLockApplications.isEmpty)
         precondition(resetReload.showDockIcon && resetReload.enableAtLaunch && resetReload.autoCalibrate && resetReload.autoCalibrationDelay == 5)
         precondition(resetReload.trigger == 90 && resetReload.fadeStrength == 1 && resetReload.holdToReset)
         let defaults = FoldModel(preferences: preferences)
@@ -29,6 +39,12 @@ import SceneKit
         defaults.resetSettings()
         precondition(defaults.trigger == 90 && defaults.blurStrength == 1)
         precondition(defaults.autoCalibrate && defaults.minimumCalibrationAngle == 30 && defaults.holdToReset)
+        defaults.lockScreenEffect = true
+        let prepared = NSApp.windows.first { $0 is FoldOverlayPanel && $0.canBecomeVisibleWithoutLogin }!
+        precondition(prepared.isVisible && prepared.ignoresMouseEvents && !prepared.canBecomeKey)
+        precondition(!(prepared.contentView is MetalFoldView), "The prepared panel must contain no desktop renderer before locking")
+        defaults.lockScreenEffect = false
+        precondition(!prepared.isVisible, "Disabling the experiment must close its prepared window")
         let geometry = ViewingGeometry()
         let edge = geometry.edgeOnDegrees * .pi / 180
         // At edge-on the screen normal is perpendicular to the eye vector.

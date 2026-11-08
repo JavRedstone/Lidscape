@@ -4,6 +4,18 @@
 
 Settings save automatically and survive quitting. To see a slider’s effect without moving your real lid, keep the preview partly folded while adjusting it.
 
+**App behavior → Live desktop capture** defaults to on and keeps content moving during the fold. Turn it off to capture one still image per fold and stop capture after that first frame. This preference saves across launches; Reset settings turns it back on.
+
+## Lock-screen content
+
+**App behavior → Lock-screen content** saves across launches:
+
+- **Everything visible** (default): captures the built-in display, including other apps’ overlays and overlays that appear after capture starts. Lidscape’s own windows are excluded to prevent visual feedback.
+- **Selected applications**: includes system content plus the visible windows and overlays of apps you choose. Click **Choose applications…** to select one or more apps, then use the minus button beside an app to remove it. The selection saves across launches. Selected apps must be running when the fold begins; additional windows they create during the fold are included.
+- **System content only**: the login-window interface and known Apple wallpaper providers.
+
+This choice applies while **Lock-screen fold (experimental)** is enabled. That experimental switch resets on quit; the content choice and application list are retained. Reset settings returns to Everything visible and clears the application list.
+
 ## Match your viewing position
 
 ![Distance, manual calibration, automatic calibration, and preview angle mode](images/guide/calibration.png)

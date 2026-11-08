@@ -24,6 +24,52 @@ import ScreenCaptureKit
     }
 
     static func main() {
+        let display = CGRect(x: 0, y: 0, width: 1512, height: 982)
+        precondition(LockScreenCapturePolicy.accepts(bundleIdentifier: "com.apple.loginwindow",
+            onScreen: true, windowFrame: display, displayFrame: display))
+        for provider in LockScreenCapturePolicy.backgroundProviders {
+            precondition(LockScreenCapturePolicy.accepts(bundleIdentifier: provider,
+                onScreen: true, windowFrame: display, displayFrame: display), "System wallpaper must be included behind the login window")
+            precondition(!LockScreenCapturePolicy.accepts(bundleIdentifier: provider,
+                onScreen: false, windowFrame: display, displayFrame: display))
+            precondition(!LockScreenCapturePolicy.accepts(bundleIdentifier: provider,
+                onScreen: true, windowFrame: display.offsetBy(dx: display.width, dy: 0), displayFrame: display))
+        }
+        for owner in [nil, "local.macfold.app", "com.apple.finder", "com.apple.wallpaper.extension.unrecognized", "com.apple.Wallpaper-Settings.extension"] {
+            precondition(!LockScreenCapturePolicy.accepts(bundleIdentifier: owner,
+                onScreen: true, windowFrame: display, displayFrame: display), "Desktop content must never be a lock-screen source")
+        }
+        precondition(!LockScreenCapturePolicy.accepts(bundleIdentifier: "com.apple.loginwindow",
+            onScreen: false, windowFrame: display, displayFrame: display))
+        precondition(!LockScreenCapturePolicy.accepts(bundleIdentifier: "com.apple.loginwindow",
+            onScreen: true, windowFrame: CGRect(x: 0, y: 0, width: 300, height: 100), displayFrame: display))
+        precondition(!LockScreenCapturePolicy.accepts(bundleIdentifier: "com.apple.loginwindow",
+            onScreen: true, windowFrame: display.offsetBy(dx: 1512, dy: 0), displayFrame: display))
+        let overlay = CGRect(x: 500, y: 0, width: 400, height: 160)
+        precondition(!LockScreenCapturePolicy.accepts(bundleIdentifier: "com.Jackson.DynamicNotch",
+            onScreen: true, windowFrame: overlay, displayFrame: display))
+        precondition(LockScreenCapturePolicy.accepts(bundleIdentifier: "com.Jackson.DynamicNotch",
+            onScreen: true, windowFrame: overlay, displayFrame: display,
+            content: .selectedApplications, selectedApplications: ["com.Jackson.DynamicNotch"]))
+        precondition(LockScreenCapturePolicy.accepts(bundleIdentifier: "example.chosen-app",
+            onScreen: true, windowFrame: overlay, displayFrame: display,
+            content: .selectedApplications, selectedApplications: ["example.chosen-app"]), "Application selection must work for any chosen bundle")
+        precondition(!LockScreenCapturePolicy.accepts(bundleIdentifier: "example.other-overlay",
+            onScreen: true, windowFrame: overlay, displayFrame: display,
+            content: .selectedApplications, selectedApplications: ["com.Jackson.DynamicNotch"]))
+        precondition(LockScreenCapturePolicy.accepts(bundleIdentifier: "example.other-overlay",
+            onScreen: true, windowFrame: overlay, displayFrame: display, content: .everything))
+        for mode in LockScreenContent.allCases {
+            precondition(!LockScreenCapturePolicy.accepts(bundleIdentifier: "local.macfold.app",
+                onScreen: true, windowFrame: display, displayFrame: display, content: mode, selectedApplications: ["local.macfold.app", "com.Jackson.DynamicNotch"]))
+            precondition(!LockScreenCapturePolicy.accepts(bundleIdentifier: "com.Jackson.DynamicNotch",
+                onScreen: false, windowFrame: overlay, displayFrame: display, content: mode, selectedApplications: ["local.macfold.app", "com.Jackson.DynamicNotch"]))
+            precondition(!LockScreenCapturePolicy.accepts(bundleIdentifier: "com.Jackson.DynamicNotch",
+                onScreen: true, windowFrame: overlay.offsetBy(dx: display.width, dy: 0), displayFrame: display,
+                content: mode, selectedApplications: ["local.macfold.app", "com.Jackson.DynamicNotch"]))
+        }
+        print("PASS: capture scopes honor arbitrary selected apps, visibility, display bounds and self-exclusion")
+        print("PASS: lock-screen source rejects desktop apps, hidden/small windows and other displays")
         let capture = DesktopCapture()
         precondition(capture.latest().image == nil)
         capture.receive(sample(.idle))
@@ -47,6 +93,17 @@ import ScreenCaptureKit
         precondition(capture.latest().image == nil)
         capture.receive(sample(.complete))
         precondition(capture.latest().image == nil, "Late callbacks from a stopped stream must be ignored")
+        let still = DesktopCapture()
+        still.freeze()
+        still.receive(sample(.complete))
+        let snapshot = still.latest().image!
+        still.freeze()
+        still.receive(sample(.complete, width: 16))
+        still.receive(sample(.blank))
+        precondition(still.latest().image === snapshot, "Still-image mode must retain its first frame without accepting later callbacks")
+        still.stop()
+        precondition(still.latest().image == nil, "Dismissing a still-image fold must release its snapshot")
+        print("PASS: still-image mode freezes a valid frame and releases it on stop")
         print("PASS: live frame replacement, static desktop, suspended/blank/stopped invalidation, fresh-frame resume, late callback rejection")
     }
 }

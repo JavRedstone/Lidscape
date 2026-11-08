@@ -142,6 +142,8 @@ For a comfortable working position, set **Distance**, position the lid, look str
 
 | Setting | Default | Behavior |
 | --- | --- | --- |
+| Live desktop capture | On | Updates content throughout the fold. Turn off to use one still image per fold and stop capture after the first frame. |
+| Lock-screen content | Everything visible | Fold all visible content, choose specific applications, or include system content only with the experimental lock-screen effect. |
 | Distance | 55 cm | Horizontal distance from the hinge plane to your eyes. |
 | Manual eye height | 30 cm | Eye height above the hinge; calibration replaces this estimate. |
 | Preview zero | Lid closed | Choose Edge-on to eyes to end the slider where the panel aligns with the eye-to-hinge line. |
@@ -163,7 +165,7 @@ Auto-calibration and hold reset are independent. If calibration is pending durin
 
 ## Limitations and privacy
 
-- The desktop streams live during the fold at up to 60 frames per second, capped at 1920 pixels wide. Capture stops when the overlay is dismissed. Frames stay in memory; no audio is captured and nothing is saved to disk. Lidscape’s own windows are excluded to prevent visual feedback.
+- With Live desktop capture enabled (the default), the desktop streams during the fold at up to 60 frames per second, capped at 1920 pixels wide. Turn it off to stop capture after the first frame and use that still image for the fold. Frames stay in memory; no audio is captured and nothing is saved to disk. Lidscape’s own windows are excluded to prevent visual feedback.
 - Hardware sensor availability varies. Without a valid reading, the desktop overlay stays hidden and the preview remains usable.
 - External displays are untouched. The app does not cover the secure login screen or bypass normal lid sleep. Sleep and display reconfiguration stop capture and dismiss the overlay. After waking, a fresh stream can resume during reopening; blank or suspended frames hide the overlay. Secure lock-screen capture is not guaranteed.
 - Imported hinges and the active-display-to-hinge offset are approximate. The preview is useful for evaluating the effect, not an exact mechanical simulation.

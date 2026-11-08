@@ -7,6 +7,8 @@ import IOKit.hid
 import ScreenCaptureKit
 import CoreMedia
 import CoreImage.CIFilterBuiltins
+import Darwin
+import UniformTypeIdentifiers
 
 // HID feature report documented by samhenrigold/LidAngleSensor.
 final class LidSensor {
@@ -129,6 +131,124 @@ struct FoldResumeGate {
     }
 }
 
+enum LockScreenContent: String, CaseIterable {
+    case everything, selectedApplications, systemOnly
+    var overlaySpaceLevel: Int32 {
+        switch self {
+        case .systemOnly: return 400
+        case .selectedApplications, .everything: return .max
+        }
+    }
+    var title: String {
+        switch self {
+        case .systemOnly: return "System content only"
+        case .selectedApplications: return "Selected applications"
+        case .everything: return "Everything visible"
+        }
+    }
+    var explanation: String {
+        switch self {
+        case .systemOnly: return "Folds the login-window interface and Apple wallpaper."
+        case .selectedApplications: return "Folds system content plus visible windows and overlays from the apps you select. Lidscape is always excluded."
+        case .everything: return "Folds all visible content on the built-in display, including other apps’ overlays. Lidscape’s own windows are excluded."
+        }
+    }
+}
+
+struct LockScreenCapturePolicy {
+    // System wallpaper providers have their own windows, separate from loginwindow.
+    static let backgroundProviders: Set<String> = [
+        "com.apple.wallpaper.agent",
+        "com.apple.wallpaper.extension.aerials", "com.apple.wallpaper.extension.dynamic",
+        "com.apple.wallpaper.extension.image", "com.apple.wallpaper.extension.legacy",
+        "com.apple.wallpaper.extension.monterey", "com.apple.wallpaper.extension.ventura",
+        "com.apple.wallpaper.extension.sonoma", "com.apple.wallpaper.extension.sequoia",
+        "com.apple.wallpaper.extension.macintosh", "com.apple.wallpaper.extension.gradient"
+    ]
+    static func isBackgroundProvider(_ bundleIdentifier: String?) -> Bool {
+        bundleIdentifier.map { backgroundProviders.contains($0) } ?? false
+    }
+    static func accepts(bundleIdentifier: String?, onScreen: Bool, windowFrame: CGRect, displayFrame: CGRect,
+                        content: LockScreenContent = .systemOnly, selectedApplications: Set<String> = []) -> Bool {
+        // Never include our own renderer, including in the broadest mode.
+        guard bundleIdentifier != "local.macfold.app", onScreen,
+              displayFrame.width > 0, displayFrame.height > 0 else { return false }
+        let overlap = windowFrame.intersection(displayFrame)
+        guard !overlap.isNull, overlap.width > 0, overlap.height > 0 else { return false }
+        if content == .everything { return true }
+        if content == .selectedApplications, let bundleIdentifier, selectedApplications.contains(bundleIdentifier) {
+            return true
+        }
+        guard bundleIdentifier == "com.apple.loginwindow" || isBackgroundProvider(bundleIdentifier) else { return false }
+        return overlap.width >= displayFrame.width * 0.8
+            && overlap.height >= displayFrame.height * 0.8
+    }
+}
+
+// Private WindowServer placement, restricted to the opt-in lock-screen test.
+// A normal window level does not place a window in the lock-screen compositor.
+@MainActor final class LockScreenOverlaySpace {
+    static let shared = LockScreenOverlaySpace()
+    private typealias Connection = @convention(c) () -> Int32
+    private typealias Create = @convention(c) (Int32, Int32, CFDictionary?) -> UInt64
+    private typealias SetLevel = @convention(c) (Int32, UInt64, Int32) -> Void
+    private typealias Show = @convention(c) (Int32, CFArray) -> Void
+    private typealias Place = @convention(c) (Int32, UInt64, CFArray, Int32) -> Void
+    private typealias CopySpaces = @convention(c) (Int32, Int32, CFArray) -> Unmanaged<CFArray>?
+    private var library: UnsafeMutableRawPointer?
+    private var connection: Int32 = 0
+    private var space: UInt64 = 0
+    private var place: Place?
+    private var show: Show?
+    private var copySpaces: CopySpaces?
+    private var setLevel: SetLevel?
+    private(set) var diagnostic = "Overlay Space not initialized."
+
+    func attach(_ window: NSWindow, content: LockScreenContent = .systemOnly) -> Bool {
+        guard window.windowNumber > 0 else { diagnostic = "The overlay window has no WindowServer ID yet."; return false }
+        if space == 0 && !initialize() { return false }
+        guard let place, let show, let copySpaces, let setLevel else { return false }
+        setLevel(connection, space, content.overlaySpaceLevel)
+        show(connection, [space] as CFArray)
+        place(connection, space, [window.windowNumber] as CFArray, 7)
+        // These setters return void. Verify actual membership instead of
+        // interpreting an undefined return register as an error code.
+        // Include OS-controlled Spaces (bit 3), not just user desktops.
+        let memberships = copySpaces(connection, 15, [window.windowNumber] as CFArray)?.takeRetainedValue() as? [NSNumber]
+        let attached = memberships?.contains { $0.uint64Value == space } == true
+        let reported = memberships?.map { String($0.uint64Value) }.joined(separator: ", ") ?? "unavailable"
+        diagnostic = attached ? "Dedicated overlay Space attached; window membership verified." : "Overlay Space \(space) requested for window \(window.windowNumber); reported Spaces: \(reported)."
+        return attached
+    }
+    private func initialize() -> Bool {
+        // Keep one Space and its function pointers for this process's lifetime.
+        // WindowServer releases the Space when the app connection exits.
+        if library == nil {
+            library = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_NOW | RTLD_LOCAL)
+        }
+        guard let library,
+              let connectionSymbol = dlsym(library, "SLSMainConnectionID"),
+              let createSymbol = dlsym(library, "SLSSpaceCreate"),
+              let levelSymbol = dlsym(library, "SLSSpaceSetAbsoluteLevel"),
+              let showSymbol = dlsym(library, "SLSShowSpaces"),
+              let placeSymbol = dlsym(library, "SLSSpaceAddWindowsAndRemoveFromSpaces"),
+              let copySymbol = dlsym(library, "SLSCopySpacesForWindows") ?? dlsym(library, "CGSCopySpacesForWindows") else {
+            diagnostic = "The SkyLight overlay Space APIs are unavailable on this macOS version."
+            return false
+        }
+        connection = unsafeBitCast(connectionSymbol, to: Connection.self)()
+        let created = unsafeBitCast(createSymbol, to: Create.self)(connection, 1, nil)
+        guard created != 0 else { diagnostic = "WindowServer could not create an overlay Space."; return false }
+        unsafeBitCast(levelSymbol, to: SetLevel.self)(connection, created, 400)
+        setLevel = unsafeBitCast(levelSymbol, to: SetLevel.self)
+        show = unsafeBitCast(showSymbol, to: Show.self)
+        place = unsafeBitCast(placeSymbol, to: Place.self)
+        copySpaces = unsafeBitCast(copySymbol, to: CopySpaces.self)
+        space = created
+        return true
+    }
+}
+
 // Keep only the newest IOSurface-backed image. The display link pulls it;
 // capture callbacks never queue one main-thread task per frame.
 final class DesktopCapture: NSObject, SCStreamOutput, SCStreamDelegate {
@@ -153,6 +273,16 @@ final class DesktopCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     }
     func stop() {
         lock.lock(); acceptingFrames = false; image = nil; lock.unlock()
+        stopStream()
+    }
+    func freeze() {
+        lock.lock()
+        guard acceptingFrames, image != nil else { lock.unlock(); return }
+        acceptingFrames = false
+        lock.unlock()
+        stopStream()
+    }
+    private func stopStream() {
         let previous = stream; stream = nil
         previous?.stopCapture { _ in
             try? previous?.removeStreamOutput(self, type: .screen)
@@ -396,6 +526,11 @@ final class FoldGPU {
         lastGPUSeconds = max(0, buffer.gpuEndTime - buffer.gpuStartTime)
         return texture
     }
+}
+
+final class FoldOverlayPanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
 }
 
 final class MetalFoldView: MTKView, MTKViewDelegate {
@@ -871,6 +1006,9 @@ struct MacHardware {
         guard settingsReady else { return }
         preferences.set([
             "enableAtLaunch": enableAtLaunch, "model": previewModel, "color": previewColor, "showDockIcon": showDockIcon,
+            "liveCapture": liveDesktopCapture,
+            "lockScreenContent": lockScreenContent.rawValue,
+            "lockScreenApplications": selectedLockApplications,
             "distance": geometry.distance, "eyeHeight": geometry.eyeHeight,
             "trigger": trigger, "smoothing": smoothing, "blur": blurStrength, "fade": fadeStrength,
             "hold": holdToReset, "holdDelay": holdDelay,
@@ -902,6 +1040,15 @@ struct MacHardware {
         eyeRelativePreview = values["eyeRelative"] as? Bool ?? false
         showDockIcon = values["showDockIcon"] as? Bool ?? true
         enableAtLaunch = values["enableAtLaunch"] as? Bool ?? true
+        liveDesktopCapture = values["liveCapture"] as? Bool ?? true
+        selectedLockApplications = values["lockScreenApplications"] as? [String: String] ?? [:]
+        let storedContent = values["lockScreenContent"] as? String
+        if storedContent == "dynamicNotch" {
+            selectedLockApplications["com.Jackson.DynamicNotch"] = "DynamicNotch"
+            lockScreenContent = .selectedApplications
+        } else {
+            lockScreenContent = storedContent.flatMap(LockScreenContent.init(rawValue:)) ?? .everything
+        }
     }
     let hardwareIdentifier = MacHardware.identifier
     func useDetectedModel() {
@@ -909,6 +1056,10 @@ struct MacHardware {
     }
     func resetSettings() {
         setEnabled(false)
+        lockScreenEffect = false
+        liveDesktopCapture = true
+        lockScreenContent = .everything
+        selectedLockApplications = [:]
         showDockIcon = true
         geometry = ViewingGeometry(); refreshDisplaySize()
         trigger = 90; smoothing = 0.055; blurStrength = 1; fadeStrength = 1
@@ -923,6 +1074,67 @@ struct MacHardware {
     }
     @Published var angle: Double?
     @Published var enabled = false
+    @Published var lockScreenContent = LockScreenContent.everything {
+        didSet {
+            saveSettings()
+            hide()
+            lidHold = HoldResetState(); foldThreshold = FoldThreshold()
+        }
+    }
+    @Published var selectedLockApplications: [String: String] = [:] {
+        didSet {
+            saveSettings()
+            hide()
+            lidHold = HoldResetState(); foldThreshold = FoldThreshold()
+        }
+    }
+    func chooseLockScreenApplications() {
+        let panel = NSOpenPanel()
+        panel.title = "Include applications on the lock screen"
+        panel.message = "Choose the apps whose visible windows and overlays should fold with the lock screen."
+        panel.prompt = "Include"
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.canChooseFiles = true; panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true; panel.canCreateDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+        guard panel.runModal() == .OK else { return }
+        var applications = selectedLockApplications
+        for url in panel.urls {
+            guard let bundle = Bundle(url: url), let identifier = bundle.bundleIdentifier,
+                  identifier != "local.macfold.app" else { continue }
+            let name = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+                ?? bundle.object(forInfoDictionaryKey: "CFBundleName") as? String
+                ?? url.deletingPathExtension().lastPathComponent
+            applications[identifier] = name
+        }
+        selectedLockApplications = applications
+    }
+    @Published var liveDesktopCapture = true {
+        didSet {
+            saveSettings()
+            hide()
+            lidHold = HoldResetState(); foldThreshold = FoldThreshold()
+        }
+    }
+    // Session-only: each launch requires opting into the prototype.
+    @Published var lockScreenEffect = false {
+        didSet {
+            lockTickTimer?.invalidate(); lockTickTimer = nil
+            hide()
+            if lockScreenEffect { prepareLockPanel() }
+            else { preparedLockPanel?.close(); preparedLockPanel = nil }
+            lidHold = HoldResetState(); foldThreshold = FoldThreshold()
+            lockScreenStatus = lockScreenEffect ? lockSpaceDiagnostic : "Lock-screen experiment off."
+        }
+    }
+    @Published var lockScreenStatus = "Lock-screen experiment off."
+    private var screenLocked = false
+    private var lockObservers: [NSObjectProtocol] = []
+    private var lockTickTimer: Timer?
+    private var lockTestDeadline = 0.0
+    private var preparedLockPanel: FoldOverlayPanel?
+    private var lockSpaceReady = false
+    private var lockSpaceDiagnostic = "Overlay Space not prepared."
     @Published var previewModel = "MacBookPro14" {
         didSet { saveSettings(); if !availableColors.contains(previewColor) { previewColor = availableColors[0] } }
     }
@@ -1001,6 +1213,10 @@ struct MacHardware {
     private var canvas: MetalFoldView?
     private var desktopCapture: DesktopCapture?
     private var captureScreenFrame: NSRect?
+    private var captureIsLockScreen = false
+    private var lockOverlayLevel = Int(CGShieldingWindowLevel()) + 1
+    private var lockBackgroundWindowCount = 0
+    private var lockAdditionalWindowCount = 0
     private var overlayReveal = SmoothValue()
     private var capturing = false
     private var generation = 0
@@ -1064,7 +1280,10 @@ struct MacHardware {
         }
         if let screen = NSScreen.screens.first(where: { $0.maximumFramesPerSecond > 60 }) ?? NSScreen.main {
             refreshRate = screen.maximumFramesPerSecond
-            let target = FrameTickTarget { [weak self] in self?.tick() }
+            let target = FrameTickTarget { [weak self] in
+                guard let self, !(self.screenLocked && self.lockScreenEffect) else { return }
+                self.tick()
+            }
             let link = screen.displayLink(target: target, selector: #selector(FrameTickTarget.tick))
             link.preferredFrameRateRange = CAFrameRateRange(minimum: Float(min(80, refreshRate)), maximum: Float(refreshRate), preferred: Float(refreshRate))
             link.add(to: .main, forMode: .common)
@@ -1092,6 +1311,34 @@ struct MacHardware {
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.hide(); self?.refreshDisplaySize() }
+        }
+        // These notifications are not a documented lock-state API. The
+        // experiment starts off each launch; only a new lock event arms it.
+        for (name, locked) in [("com.apple.screenIsLocked", true), ("com.apple.screenIsUnlocked", false)] {
+            let observer = DistributedNotificationCenter.default().addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.handleScreenLock(locked) }
+            }
+            lockObservers.append(observer)
+        }
+    }
+    private func handleScreenLock(_ locked: Bool) {
+        screenLocked = locked
+        lockTickTimer?.invalidate(); lockTickTimer = nil
+        hide()
+        sampler.restart()
+        foldThreshold = FoldThreshold(); lidHold = HoldResetState()
+        pendingCalibration = nil; settledCalibration = SettledCalibration()
+        captureRetryAfter = 0
+        if locked && lockScreenEffect {
+            preparedLockPanel?.level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()))
+            lockTestDeadline = ProcessInfo.processInfo.systemUptime + 90
+            lockScreenStatus = "Locked. Waiting for the lid to enter the effect range."
+            // A screen display link may pause when its user's windows are hidden.
+            let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.tick() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            lockTickTimer = timer
         }
     }
     private func handleLifecycle(_ reason: FoldResumeGate.Reason, suspending: Bool) {
@@ -1158,37 +1405,104 @@ struct MacHardware {
             }
         }
     }
+    private func prepareLockPanel() {
+        guard !screenLocked, preparedLockPanel == nil,
+              let screen = NSScreen.screens.first(where: {
+                  guard let id = ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value else { return false }
+                  return CGDisplayIsBuiltin(id) != 0
+              }) else { return }
+        let panel = FoldOverlayPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false
+        panel.canBecomeVisibleWithoutLogin = true
+        panel.hidesOnDeactivate = false; panel.canHide = false
+        panel.isFloatingPanel = true; panel.ignoresMouseEvents = true
+        panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle, .canJoinAllApplications]
+        panel.level = .statusBar
+        panel.contentView = NSView(frame: NSRect(origin: .zero, size: screen.frame.size))
+        preparedLockPanel = panel
+        // Register a clear, empty window while unlocked, then reuse that exact
+        // window after locking. No desktop image is ever attached to this panel.
+        panel.orderFrontRegardless()
+        lockSpaceReady = LockScreenOverlaySpace.shared.attach(panel, content: lockScreenContent)
+        lockSpaceDiagnostic = LockScreenOverlaySpace.shared.diagnostic
+    }
     private func dismissOverlay() {
         canvas?.stopRendering()
-        overlay?.orderOut(nil)
-        overlay?.contentView = nil
-        overlay?.close()
+        if let overlay, overlay === preparedLockPanel {
+            overlay.alphaValue = 0
+            overlay.contentView = NSView(frame: NSRect(origin: .zero, size: overlay.frame.size))
+            overlay.level = .statusBar
+            overlay.displayIfNeeded()
+            overlay.alphaValue = 1
+        } else {
+            overlay?.orderOut(nil)
+            overlay?.contentView = nil
+            overlay?.close()
+        }
         overlay = nil; canvas = nil
         overlayReveal = SmoothValue()
     }
     private func hide() {
         generation += 1
-        desktopCapture?.stop(); desktopCapture = nil; captureScreenFrame = nil
+        desktopCapture?.stop(); desktopCapture = nil; captureScreenFrame = nil; captureIsLockScreen = false
         dismissOverlay()
         progress = 0; lidSmoothing = SmoothValue()
     }
-    private func makeOverlay(frame: NSRect) {
-        let window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+    private func makeOverlay(frame: NSRect) -> Bool {
+        let window: NSWindow
+        if captureIsLockScreen {
+            guard let panel = preparedLockPanel, lockSpaceReady else {
+                lockScreenStatus = lockSpaceDiagnostic
+                return false
+            }
+            panel.setFrame(frame, display: false)
+            window = panel
+        } else {
+            window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+        }
         window.isReleasedWhenClosed = false
         window.level = .screenSaver
-        window.ignoresMouseEvents = true
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        if captureIsLockScreen {
+            window.canBecomeVisibleWithoutLogin = true
+            window.level = NSWindow.Level(rawValue: lockOverlayLevel)
+            window.collectionBehavior.formUnion([.canJoinAllApplications, .ignoresCycle])
+        }
+        window.ignoresMouseEvents = true
         // Keep the drawable attached, but visually transparent, while the first
         // GPU frame is prepared. Ordering an opaque window first flashes black.
         window.alphaValue = 0.001
         let view = MetalFoldView(frame: NSRect(origin: .zero, size: frame.size))
         window.contentView = view
         overlay = window; canvas = view
+        if captureIsLockScreen {
+            guard LockScreenOverlaySpace.shared.attach(window, content: lockScreenContent) else {
+                lockSpaceReady = false
+                lockSpaceDiagnostic = LockScreenOverlaySpace.shared.diagnostic
+                lockScreenStatus = lockSpaceDiagnostic
+                dismissOverlay()
+                return false
+            }
+            window.orderFrontRegardless()
+        }
+        return true
     }
-    deinit { displayLink?.invalidate(); desktopCapture?.stop() }
+    deinit {
+        displayLink?.invalidate(); desktopCapture?.stop()
+        lockTickTimer?.invalidate()
+        let panel = preparedLockPanel
+        DispatchQueue.main.async { panel?.close() }
+        for observer in lockObservers { DistributedNotificationCenter.default().removeObserver(observer) }
+    }
     private func tick() {
         defer { refreshMenuStatus() }
         let now = ProcessInfo.processInfo.systemUptime
+        if screenLocked && lockScreenEffect && now >= lockTestDeadline {
+            lockScreenEffect = false
+            lockScreenStatus = "Lock-screen test ended after 90 seconds. Enable it again for another test."
+            return
+        }
         let dt = min(0.1, now - lastTick); lastTick = now
         if previewPlaying {
             let playback = previewPlayback.advance(dt: dt, holdDelay: holdDelay)
@@ -1201,7 +1515,7 @@ struct MacHardware {
         if reading != angle { angle = reading }
         let canAutoCalibrate = angle.map { calibrationAngleGate.update(angle: $0, minimum: minimumCalibrationAngle) } ?? false
         if !canAutoCalibrate { pendingCalibration = nil; settledCalibration = SettledCalibration() }
-        if autoCalibrate && !suspended && canAutoCalibrate {
+        if autoCalibrate && !screenLocked && !suspended && canAutoCalibrate {
             if let settled = settledCalibration.update(angle: angle, now: now, delay: autoCalibrationDelay) { pendingCalibration = settled }
             if let pending = pendingCalibration {
                 if let angle, abs(angle - pending) > 1.5 { pendingCalibration = nil }
@@ -1210,8 +1524,13 @@ struct MacHardware {
                 }
             }
         }
-        guard enabled, !suspended, let angle else {
+        guard enabled, !suspended, (!screenLocked || lockScreenEffect), let angle else {
             foldThreshold = FoldThreshold()
+            if overlay != nil || desktopCapture != nil || capturing { hide() }
+            return
+        }
+        if screenLocked && !lockSpaceReady {
+            lockScreenStatus = lockSpaceDiagnostic
             if overlay != nil || desktopCapture != nil || capturing { hide() }
             return
         }
@@ -1223,6 +1542,7 @@ struct MacHardware {
         }
         let frame = desktopCapture?.latest()
         if let error = frame?.error {
+            if captureIsLockScreen { lockScreenStatus = "Lock-screen stream interrupted: \(error.localizedDescription)" }
             hide()
             captureRetryAfter = now + 1
             needsScreenPermission = !CGPreflightScreenCaptureAccess()
@@ -1240,7 +1560,12 @@ struct MacHardware {
         }
         progress = lidSmoothing.advance(to: target, dt: dt, response: smoothing)
         if let image = frame?.image, let screenFrame = captureScreenFrame {
-            if canvas == nil { makeOverlay(frame: screenFrame); status = "Live desktop capture active." }
+            if !liveDesktopCapture { desktopCapture?.freeze() }
+            if canvas == nil {
+                guard makeOverlay(frame: screenFrame) else { return }
+                status = "Live desktop capture active."
+                if captureIsLockScreen { lockScreenStatus = "Receiving login-window frames. Check whether the fold is visible while locked." }
+            }
             if let canvas {
                 canvas.source = image
                 canvas.resetAmount = reset; canvas.blurStrength = blurStrength; canvas.fadeStrength = fadeStrength
@@ -1251,6 +1576,13 @@ struct MacHardware {
                     let alpha = overlayReveal.advance(to: 1, dt: dt, response: 0.045)
                     overlay?.alphaValue = alpha > 0.995 ? 1 : max(0.001, alpha)
                 }
+                if captureIsLockScreen, let overlay {
+                    let render = canvas.hasRenderedFrame ? "GPU ready" : "waiting for GPU/drawable"
+                    let space = overlay.isOnActiveSpace ? "active Space" : "outside active Space"
+                    let visible = overlay.occlusionState.contains(.visible) ? "onscreen" : "occluded"
+                    let diagnostic = "\(lockScreenContent.title); \(render); \(space); \(visible); opacity \(Int(overlay.alphaValue * 100))%; background windows \(lockBackgroundWindowCount); additional windows \(lockAdditionalWindowCount)."
+                    if lockScreenStatus != diagnostic { lockScreenStatus = diagnostic }
+                }
             }
             return
         }
@@ -1260,6 +1592,8 @@ struct MacHardware {
         capturing = true
         status = "Starting live desktop capture…"
         let token = generation
+        let forLockScreen = screenLocked
+        if forLockScreen { lockScreenStatus = "Checking whether macOS exposes lock-screen content…" }
         Task {
             let capture = DesktopCapture()
             defer { capturing = false }
@@ -1284,18 +1618,80 @@ struct MacHardware {
                 // Exclude this process, including overlays created after the stream
                 // starts, so the transformed display never feeds back into capture.
                 let ownApps = content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
-                guard !ownApps.isEmpty else {
+                guard forLockScreen || !ownApps.isEmpty else {
                     throw NSError(domain: "Lidscape.Capture", code: 1,
                         userInfo: [NSLocalizedDescriptionKey: "Lidscape could not exclude its own windows from capture."])
                 }
-                let filter = SCContentFilter(display: display, excludingApplications: ownApps, exceptingWindows: [])
-                desktopCapture = capture; captureScreenFrame = screen.frame
+                let filter: SCContentFilter
+                if forLockScreen {
+                    // Require a visible full-screen login-window source before
+                    // beginning lock-screen capture in any mode.
+                    let hasLoginWindow = content.windows.contains {
+                        $0.owningApplication?.bundleIdentifier == "com.apple.loginwindow"
+                            && LockScreenCapturePolicy.accepts(bundleIdentifier: $0.owningApplication?.bundleIdentifier,
+                                onScreen: $0.isOnScreen, windowFrame: $0.frame, displayFrame: display.frame)
+                    }
+                    let selectedApplications = Set(selectedLockApplications.keys)
+                    let lockWindows = content.windows.filter {
+                        LockScreenCapturePolicy.accepts(bundleIdentifier: $0.owningApplication?.bundleIdentifier,
+                            onScreen: $0.isOnScreen, windowFrame: $0.frame, displayFrame: display.frame,
+                            content: lockScreenContent, selectedApplications: selectedApplications)
+                    }
+                    guard hasLoginWindow else {
+                        captureRetryAfter = ProcessInfo.processInfo.systemUptime + 1
+                        lockScreenStatus = "macOS is not exposing a full-screen login window. The lock-screen effect stays hidden."
+                        return
+                    }
+                    // Count the sources selected by the current capture scope.
+                    lockBackgroundWindowCount = lockWindows.filter {
+                        LockScreenCapturePolicy.isBackgroundProvider($0.owningApplication?.bundleIdentifier)
+                    }.count
+                    lockAdditionalWindowCount = lockWindows.filter {
+                        $0.owningApplication?.bundleIdentifier != "com.apple.loginwindow"
+                            && !LockScreenCapturePolicy.isBackgroundProvider($0.owningApplication?.bundleIdentifier)
+                    }.count
+                    if lockScreenContent == .everything {
+                        guard !ownApps.isEmpty else {
+                            throw NSError(domain: "Lidscape.Capture", code: 2,
+                                userInfo: [NSLocalizedDescriptionKey: "Cannot exclude Lidscape’s overlay from full-display capture."])
+                        }
+                        // Full-display capture also includes overlays that appear
+                        // after startup; process exclusion prevents recursion.
+                        filter = SCContentFilter(display: display, excludingApplications: ownApps, exceptingWindows: [])
+                    } else if lockScreenContent == .selectedApplications {
+                        let applications = content.applications.filter {
+                            selectedApplications.contains($0.bundleIdentifier)
+                                && $0.processID != ProcessInfo.processInfo.processIdentifier
+                                && $0.bundleIdentifier != "local.macfold.app"
+                        }
+                        let systemWindows = lockWindows.filter {
+                            $0.owningApplication?.bundleIdentifier == "com.apple.loginwindow"
+                                || LockScreenCapturePolicy.isBackgroundProvider($0.owningApplication?.bundleIdentifier)
+                        }
+                        // App inclusion keeps newly created windows from these
+                        // running apps in the stream. System windows are explicit
+                        // exceptions because their owners are outside that list.
+                        filter = SCContentFilter(display: display, including: applications, exceptingWindows: systemWindows)
+                    } else {
+                        filter = SCContentFilter(display: display, including: lockWindows)
+                    }
+                    let highestLoginLayer = content.windows.filter {
+                        $0.owningApplication?.bundleIdentifier == "com.apple.loginwindow"
+                            && $0.isOnScreen && $0.frame.intersects(display.frame)
+                    }.map(\.windowLayer).max() ?? 0
+                    lockOverlayLevel = max(Int(CGWindowLevelForKey(.assistiveTechHighWindow)), highestLoginLayer) + 1
+                } else {
+                    filter = SCContentFilter(display: display, excludingApplications: ownApps, exceptingWindows: [])
+                }
+                desktopCapture = capture; captureScreenFrame = screen.frame; captureIsLockScreen = forLockScreen
                 try await capture.start(filter: filter, configuration: config)
                 guard generation == token, enabled, !suspended else { capture.stop(); return }
                 status = canvas == nil ? "Waiting for live desktop frames…" : "Live desktop capture active."
+                if forLockScreen && canvas == nil { lockScreenStatus = "Login window found; waiting for capture frames." }
             } catch {
                 capture.stop()
                 guard generation == token else { return }
+                if forLockScreen { lockScreenStatus = "Lock-screen capture failed: \(error.localizedDescription)" }
                 hide()
                 captureRetryAfter = ProcessInfo.processInfo.systemUptime + 1
                 needsScreenPermission = !CGPreflightScreenCaptureAccess()
@@ -1380,6 +1776,36 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle("Show Dock icon", isOn: $model.showDockIcon)
                         Toggle("Enable animation on launch", isOn: $model.enableAtLaunch)
+                        Toggle("Live desktop capture", isOn: $model.liveDesktopCapture)
+                        Text(model.liveDesktopCapture ? "Desktop content updates throughout the fold." : "Uses a still image for each fold. Capture stops after the first frame.").font(.caption).foregroundStyle(.secondary)
+                        Toggle("Lock-screen fold (experimental)", isOn: $model.lockScreenEffect)
+                        Picker("Lock-screen content", selection: $model.lockScreenContent) {
+                            ForEach(LockScreenContent.allCases, id: \.self) { content in
+                                Text(content.title).tag(content)
+                            }
+                        }
+                        Text(model.lockScreenContent.explanation).font(.caption).foregroundStyle(.secondary)
+                        if model.lockScreenContent == .selectedApplications {
+                            Button("Choose applications…") { model.chooseLockScreenApplications() }
+                            if model.selectedLockApplications.isEmpty {
+                                Text("No apps selected. System lock-screen content is still included.").font(.caption).foregroundStyle(.secondary)
+                            }
+                            ForEach(model.selectedLockApplications.keys.sorted {
+                                (model.selectedLockApplications[$0] ?? $0).localizedStandardCompare(model.selectedLockApplications[$1] ?? $1) == .orderedAscending
+                            }, id: \.self) { identifier in
+                                HStack {
+                                    Text(model.selectedLockApplications[identifier] ?? identifier)
+                                    Spacer()
+                                    Button { model.selectedLockApplications.removeValue(forKey: identifier) } label: {
+                                        Image(systemName: "minus.circle")
+                                    }.help("Remove this application")
+                                }
+                            }
+                        }
+                        if model.lockScreenEffect {
+                            Text("Lock with Control–Command–Q, then move the lid. Each test lasts up to 90 seconds. This option resets when Lidscape quits.").font(.caption).foregroundStyle(.secondary)
+                            Text(model.lockScreenStatus).font(.caption).foregroundStyle(.secondary)
+                        }
                         Toggle("Launch at login", isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) }))
                         if model.loginNeedsApproval {
                             Button("Approve in Login Items…") { SMAppService.openSystemSettingsLoginItems() }
