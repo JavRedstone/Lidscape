@@ -10,6 +10,8 @@ Settings save automatically and survive quitting. To see a slider’s effect wit
 
 ## Lock-screen content
 
+![Lock Screen pane with capture content selection, readable status, and diagnostics](images/lock-screen.jpg)
+
 **Lock Screen → Include** saves across launches:
 
 - **Everything visible** (default): captures the built-in display, including other apps’ overlays and overlays that appear after capture starts. Lidscape’s own windows are excluded to prevent visual feedback.
@@ -20,9 +22,9 @@ This choice applies while **Lock-screen fold** is enabled. The switch, content c
 
 ## Match your viewing position
 
-![Distance, manual calibration, automatic calibration, and preview angle mode](images/guide/calibration.png)
+![Calibration pane with viewing distance, manual and automatic calibration, and advanced preview controls](images/calibration.jpg)
 
-1. Set **Distance** to the horizontal distance from your eyes to the hinge plane. The default is 55 cm.
+1. In **Calibration**, set **Viewing distance** to the horizontal distance from your eyes to the hinge plane. The default is 55 cm.
 2. Sit in your normal working position and adjust the screen comfortably.
 3. Look straight at the screen center and click **Calibrate from current lid**.
 
@@ -35,7 +37,7 @@ Calibration adopts that physical lid angle as **Start below** and estimates eye 
 **Auto-calibrate when the lid settles** defaults to on for new settings. Existing saved choices are retained.
 
 - **Calibration delay — 5 seconds:** leave the physical lid still for this long to adopt its angle. Adjust from 0.5–8 seconds.
-- **Minimum calibration angle — 30°:** an additional lower limit for automatic calibration. The supported sensor range is still 60–150°, so a minimum below 60° does not extend it.
+- **Minimum angle — 30°:** an additional lower limit for automatic calibration. The supported sensor range is still 60–150°, so a minimum below 60° does not extend it.
 
 For example, move the screen from 90° to 110°, then leave it still for five seconds. Lidscape adopts 110° as its new starting angle and estimates a new eye height. It calibrates once per hold; another movement rearms it.
 
@@ -43,7 +45,7 @@ Below the configured minimum, automatic calibration is blocked. After crossing b
 
 ## Tune the appearance and response
 
-![Smoothing, blur, fade, hold reset, and starting angle](images/guide/fold-effect.png)
+![Fold Effect pane with motion, appearance, and return-to-normal controls](images/settings.jpg)
 
 | Control | Starting value | How to use it |
 | --- | --- | --- |
@@ -66,15 +68,21 @@ The timers are independent. With defaults, the image can return to normal after 
 
 ## Restore defaults
 
-![Reset settings button](images/guide/reset-settings.png)
+![General pane with Reset settings in About this setup](images/general.jpg)
 
 In **General**, click **Reset settings…** and confirm to restore effect, calibration, preview, and Dock/startup-animation preferences. The reset is saved immediately and Desktop effect is paused for the current session. It does not revoke Screen Recording permission or unregister Launch at login; manage those separately.
 
 ## Appearance
 
+![Appearance pane with Light, Dark, and System choices](images/appearance.jpg)
+
 Choose **Appearance** in the sidebar, then **Light**, **Dark**, or **System**. System follows your Mac. The choice saves and applies to Lidscape windows, the menu panel, and native dialogs. Dock icon visibility is also in this pane.
 
 ## Activity
+
+![Illustrative Activity data showing lid movement, calibration changes, event markers, and weekly counts](images/activity.jpg)
+
+*Illustrative data is used in this Activity screenshot.*
 
 **Activity** shows live lid and starting angles over the last five minutes, with orange vertical pause markers and green enable markers. Labels appear in a separate event strip below the chart. Changes within 12 seconds share a marker; selecting a group shows every exact timestamp. It also shows today’s fold count and time folding, a seven-day fold chart, and a combined recent-history timeline. The timeline includes successful enables, pauses, and starting-angle changes, with timestamps and reasons. Launch-time enables and pauses caused by lost capture access are identified. Angle changes are labeled as automatic calibration, manual calibration, or manual adjustment. Nearby slider adjustments are combined into one change.
 

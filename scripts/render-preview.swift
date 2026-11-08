@@ -40,9 +40,7 @@ import SceneKit
             picture.unlockFocus()
             let png = NSBitmapImageRep(data: picture.tiffRepresentation!)!.representation(using: .png, properties: [:])!
             if frame == 50 {
-                for path in ["docs/images/preview.png", "docs/images/guide/preview.png"] {
-                    try png.write(to: URL(fileURLWithPath: path))
-                }
+                try png.write(to: URL(fileURLWithPath: "docs/images/preview.png"))
             }
             try png.write(to: URL(fileURLWithPath: output).appendingPathComponent(String(format: "%04d.png", frame)))
         }

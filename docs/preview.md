@@ -4,7 +4,7 @@
 
 The preview demonstrates the rendering without moving the real lid or granting Screen Recording access.
 
-![Fold preview](images/guide/preview.png)
+![Current Preview pane with automatic model selection, camera controls, and lid slider](images/preview-window.jpg)
 
 ## Your Mac, automatically
 
@@ -12,7 +12,7 @@ The preview uses your detected MacBook family automatically. There is no model o
 
 ## Move the lid and camera
 
-![Camera, playback, and lid controls](images/guide/preview-controls.png)
+The camera selector, play button, and Lid slider sit directly below the preview.
 
 1. Choose **Your viewpoint** to view the laptop from the configured eye position.
 2. Drag **Lid** toward closed. Watch the wallpaper’s perspective change while blur and fading grow toward the top.

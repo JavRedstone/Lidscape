@@ -4,7 +4,7 @@
 
 ## Desktop effect stays off
 
-Read the status below the window header or in the laptop menu. A preview that works does not prove desktop capture is authorized.
+Read **General → About this setup → Status**, the sidebar status, or the laptop menu. A preview that works does not prove desktop capture is authorized.
 
 - **Permission needed:** enable `/Applications/Lidscape.app` in Screen Recording settings, then quit and reopen it if prompted.
 - **Checking access:** wait for the capture check to finish. A failure message includes the reason.
@@ -23,9 +23,9 @@ Auto-calibration defaults to on. It adopts an eligible physical angle after the 
 
 ## Playback stops before the lid is closed
 
-Check **Preview zero**. Edge-on to eyes ends the preview at the configured viewing horizon; choose **Lid closed** for a physical 0° endpoint. The full animation can be invisible from Your viewpoint while the lid is closing; Inspect in 3D lets you inspect its physical position.
+Check **Calibration → Advanced → Preview zero**. Edge-on to eyes ends the preview at the configured viewing horizon; choose **Lid closed** for a physical 0° endpoint. The full animation can be invisible from Your viewpoint while the lid is closing; Inspect in 3D lets you inspect its physical position.
 
-## The selected model looks like Simple
+## The detected model looks like a simple laptop
 
 Apple USDZ assets are not included in the repository. Without compatible local files, the renderer uses the procedural fallback. See [optional model setup](../Resources/Models/README.md).
 
@@ -35,7 +35,7 @@ First distinguish the **preview** from the **physical lid**. Try the preview pla
 
 Increase Smoothing slightly if sensor steps are visible. A larger value makes motion softer but slower to follow your hand. A display capped at 60 Hz cannot show 120 frames per second. System load and graphics workload also affect frame pacing.
 
-If performance degrades over time, report which path is affected, roughly how long the app has been running, the model/color, whether hold reset or auto-calibration is enabled, and whether closing the preview window helps. The current app explicitly disposes overlays and display links and avoids caching changing intermediate frames. A two-minute stress test is useful evidence, not a guarantee for every long-running workload.
+If performance degrades over time, report which path is affected, roughly how long the app has been running, the detected Mac model, whether hold reset or auto-calibration is enabled, and whether closing the preview window helps. The current app explicitly disposes overlays and display links and avoids caching changing intermediate frames. A two-minute stress test is useful evidence, not a guarantee for every long-running workload.
 
 Developers can run:
 
@@ -46,20 +46,22 @@ LIDSCAPE_BENCHMARK_SECONDS=120 ./scripts/benchmark.sh
 
 ## The Dock icon disappeared
 
-Click the laptop menu bar icon → **Open Lidscape…**, then enable **General → Show Dock icon**. You can quit from the same menu.
+Click the laptop menu bar icon → **Settings…**, then enable **Appearance → Show Dock icon**. You can quit from the same menu.
 
 ## Screen goes to sleep when closed
 
-That is normal macOS behavior. Lidscape does not prevent lid sleep or draw over the secure login screen.
+That is normal macOS behavior. Lidscape does not prevent lid sleep. Lock-screen folding is a separate option in **Lock Screen**.
 
 System sleep, display sleep, and inactive sessions stop the capture stream and dismiss the overlay. Once macOS resumes, Lidscape starts a fresh live stream if the lid is still in the effect range. There is no need to open past the start angle first. Blank or suspended capture frames hide the overlay until complete frames return. Secure lock-screen capture is not guaranteed.
 
 ## Lock-screen fold
 
-Enable **General → Lock-screen fold**, lock with Control–Command–Q, then slowly tilt the lid below the normal start angle. Unlock normally afterward and check the result message beside the switch. It uses the same fold settings as the desktop. The switch saves across launches and stays enabled until you turn it off.
+![Current Lock Screen pane with capture results and copyable diagnostics](images/lock-screen.jpg)
 
-This prototype requires an onscreen, display-sized window owned by `com.apple.loginwindow`. It also includes display-sized windows from known Apple wallpaper providers, including Aerials and Dynamic, so the animated background can appear behind the lock-screen interface. Everything visible is the default and captures all visible app content. Use Selected applications and Choose applications… to include specific apps, or System content only to exclude ordinary apps. Lidscape’s own windows remain excluded in every mode. If macOS does not expose the login window or supply frames, the effect stays hidden. The diagnostic reports how many wallpaper and other app windows were actually included. App windows must be above the login surface in WindowServer ordering; ordinary desktop windows behind it are excluded. Desktop captures are discarded on lock and unlock. Window visibility uses AppKit’s `canBecomeVisibleWithoutLogin`; lock detection uses undocumented distributed notifications, so this feature applies to an already logged-in user, not the boot login screen. No authentication settings are changed.
+Enable **Lock Screen → Lock-screen fold**, lock with Control–Command–Q, then slowly tilt the lid below the normal start angle. Unlock normally afterward and check **Lock Screen → Status** and **Technical details**. It uses the same fold settings as the desktop. The switch saves across launches and stays enabled until you turn it off.
 
-Enabling the experiment prepares a clear, empty panel while the Mac is unlocked, then reuses it for login-window frames after locking. Explicit window capture includes overlays hosted in private Spaces, and the window list refreshes during the fold. The diagnostic distinguishes frame reception, GPU completion, Space membership, actual occlusion, and opacity. “GPU ready” with “occluded” and “opacity 100%” means the image was rendered but the window remains fully covered; it does not establish which WindowServer rule or surface is covering it.
+Lock-screen capture requires an onscreen, display-sized window owned by `com.apple.loginwindow`. It also includes display-sized windows from known Apple wallpaper providers, including Aerials and Dynamic, so the animated background can appear behind the lock-screen interface. Everything visible is the default and captures all visible app content. Use Selected applications and Choose applications… to include specific apps, or System content only to exclude ordinary apps. Lidscape’s own windows remain excluded in every mode. If macOS does not expose the login window or supply frames, the effect stays hidden. The diagnostic reports how many wallpaper and other app windows were actually included. App windows must be above the login surface in WindowServer ordering; ordinary desktop windows behind it are excluded. Desktop captures are discarded on lock and unlock. Window visibility uses AppKit’s `canBecomeVisibleWithoutLogin`; lock detection uses undocumented distributed notifications, so this feature applies to an already logged-in user, not the boot login screen. No authentication settings are changed.
+
+Enabling the option prepares a clear, empty panel while the Mac is unlocked, then reuses it for login-window frames after locking. Explicit window capture includes overlays hosted in private Spaces, and the window list refreshes during the fold. The diagnostic distinguishes frame reception, GPU completion, Space membership, actual occlusion, and opacity. “GPU ready” with “occluded” and “opacity 100%” means the image was rendered but the window remains fully covered; it does not establish which WindowServer rule or surface is covering it.
 
 The lock-screen path creates a dedicated overlay Space using private SkyLight functions and places the panel in it. This is the mechanism used by [DynamicNotch’s lock-screen overlay](https://github.com/jackson-storm/DynamicNotch/blob/main/DynamicNotch/Core/SystemBridges/SkyLightOperator.swift). AppKit window levels alone were insufficient in local testing. If the private functions are missing or placement fails, the diagnostic reports that failure and lock-screen capture does not start. This mechanism may change across macOS versions; normal desktop folding does not use it.

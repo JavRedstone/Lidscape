@@ -2,9 +2,16 @@
 
 [Guide home](README.md) · [Next: preview controls](preview.md)
 
-## 1. Build and install
+## 1. Download and install
 
-From a terminal:
+Download the ZIP from the [latest release](https://github.com/JavRedstone/Lidscape/releases/latest), extract it, and drag **Lidscape.app** into **Applications**. Quit an older copy before replacing it, then open the Applications copy.
+
+Requires Apple Silicon and macOS 14 or later. Releases are not notarized by Apple. If macOS blocks the app and you trust the download, use **System Settings → Privacy & Security → Open Anyway** after attempting to open it.
+
+<details>
+<summary>Build from source instead</summary>
+
+Building requires Xcode 26 or later, including its macOS SDK. From a terminal:
 
 ```sh
 git clone https://github.com/JavRedstone/Lidscape.git
@@ -13,9 +20,9 @@ cd Lidscape
 open -R "build/Lidscape.app"
 ```
 
-Building requires Apple Silicon, macOS 14 or later, and Xcode Command Line Tools. Apple model files are optional; the Simple model works in a fresh checkout.
+Copy the built app into Applications. Optional Apple model assets are not required; the built-in procedural laptop works in a fresh checkout.
 
-In Finder, copy **Lidscape.app** into **Applications**. Quit any running copy before replacing an older version. Open **Applications → Lidscape** from now on; future builds still go into `build/`, so copy each update into Applications.
+</details>
 
 ## 2. Complete setup
 
@@ -32,9 +39,9 @@ Approve macOS’s request. If access is denied:
 3. Quit and reopen Lidscape if macOS asks you to.
 4. Turn on **Desktop effect** again.
 
-![Desktop effect switch and status message](images/guide/desktop-effect.png)
+![General pane with Desktop effect, live capture, startup controls, and setup status](images/general.jpg)
 
-The message below the header explains whether access is being checked, permission is missing, or the app is ready. **Open Screen Recording** appears when permission needs attention. The preview needs no Screen Recording permission.
+Open **General** in the sidebar to enable **Desktop effect** and read **About this setup → Status**. The sidebar also shows the current state and lid angle. When capture permission is missing, a banner offers **Open System Settings…**. Preview needs no Screen Recording permission.
 
 ## 4. Try the physical lid
 
@@ -44,10 +51,10 @@ The overlay shows live desktop content during the transition, captured at up to 
 
 ## 5. Choose startup and Dock behavior
 
-![App behavior settings](images/guide/app-behavior.png)
+![Appearance pane with Light, Dark, System, and Show Dock icon](images/appearance.jpg)
 
-- **Show Dock icon:** turn off for menu-bar-only operation. Open the laptop menu → **Open Lidscape…** to return to the window.
-- **Enable animation on launch:** attempt to start the desktop effect whenever Lidscape opens. This does not launch the app by itself.
-- **Launch at login:** ask macOS to open Lidscape when you sign in. If approval is required, use **Approve in Login Items…** and approve it in System Settings.
+- **Appearance → Show Dock icon:** turn off for menu-bar-only operation. Open the laptop menu → **Settings…** to return to the window.
+- **General → Enable animation on launch:** attempt to start the desktop effect whenever Lidscape opens. This does not launch the app by itself.
+- **General → Launch at login:** ask macOS to open Lidscape when you sign in. If approval is required, use **Approve in Login Items…** and approve it in System Settings.
 
-The menu bar dot is green when ready or animating, gray when paused, and orange when checking access or needing attention. Open its menu for the exact status. Use **Pause animation** to stop the effect for this session, or **Quit Lidscape** to exit. To stay paused after relaunch, turn off Enable animation on launch.
+The menu bar dot is green when ready or animating, gray when paused, and orange when checking access or needing attention. Open its menu for the exact status. Use **Pause** to stop the effect for this session, **Enable** to resume, or **Quit** to exit. The window toolbar offers the same Pause/Enable control. To stay paused after relaunch, turn off Enable animation on launch.

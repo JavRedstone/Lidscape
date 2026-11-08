@@ -77,7 +77,7 @@ Release downloads include the **Simple** procedural laptop preview. The Apple mo
 
 ## User guide
 
-For step-by-step instructions with cropped screenshots, see the [Lidscape guide](docs/README.md): [installation](docs/getting-started.md), [preview controls](docs/preview.md), [effect settings and calibration](docs/settings.md), and [troubleshooting](docs/troubleshooting.md).
+For step-by-step instructions with current app screenshots, see the [Lidscape guide](docs/README.md): [installation](docs/getting-started.md), [preview controls](docs/preview.md), [effect settings and calibration](docs/settings.md), and [troubleshooting](docs/troubleshooting.md).
 
 ## Try the preview
 
@@ -152,7 +152,7 @@ The preview demonstrates folding, holding, and returning to normal. Its play but
 
 The laptop icon includes a status dot: **green** when ready or animating, **gray** when paused, and **orange** while checking access, awaiting permission, or missing a sensor. Open the menu for the exact status.
 
-In **General**, turn off **Show Dock icon** to run Lidscape from the menu bar only. This also removes it from the Command-Tab app switcher. The preference survives relaunch. Use the laptop menu bar icon → **Open Lidscape…** to reopen the window, or **Quit Lidscape** to exit. Turn Show Dock icon back on to restore normal Dock behavior.
+In **Appearance**, turn off **Show Dock icon** to run Lidscape from the menu bar only. This also removes it from the Command-Tab app switcher. The preference survives relaunch. Use the laptop menu bar icon → **Settings…** to reopen the window, or **Quit** to exit. Turn Show Dock icon back on to restore normal Dock behavior.
 
 ## Settings and calibration
 
@@ -202,7 +202,7 @@ git clone https://github.com/JavRedstone/Lidscape.git
 cd Lidscape
 ```
 
-Requires **Apple Silicon**, **macOS 14 or later**, and **Xcode Command Line Tools**. Run these commands from the project directory:
+Requires **Apple Silicon**, **macOS 14 or later**, and **Xcode 26 or later with its macOS SDK and command-line tools**. Run these commands from the project directory:
 
 ```sh
 ./scripts/build.sh
